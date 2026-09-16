@@ -22,7 +22,9 @@
   "needs_review",
   "pending_qty",
   "sync_history_section",
-  "sync_history"
+  "sync_history",
+  "product_lines_section",
+  "product_lines"
  ],
  "fields": [
   {
@@ -119,12 +121,25 @@
    "fieldtype": "Table",
    "label": "Sync History",
    "options": "GravityZone Sync History"
+  },
+  {
+   "collapsible": 1,
+   "description": "Only used when GravityZone Settings' License Metric is \"Per-Product Monthly Usage\" \u2014 one row per mapped GravityZone product, each tracked and reviewed independently.",
+   "fieldname": "product_lines_section",
+   "fieldtype": "Section Break",
+   "label": "Per-Product Licensing"
+  },
+  {
+   "fieldname": "product_lines",
+   "fieldtype": "Table",
+   "label": "Product Lines",
+   "options": "GravityZone Company Product"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-17 01:31:39.511954",
+ "modified": "2026-09-17 01:49:30.372575",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Company",

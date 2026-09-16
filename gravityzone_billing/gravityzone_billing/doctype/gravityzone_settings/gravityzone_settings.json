@@ -47,11 +47,11 @@
   },
   {
    "default": "License Info",
-   "description": "License Info = current allocated seats (getLicenseInfo). Monthly Usage = actual monthly consumption (getMonthlyUsage) \u2014 Bitdefender's recommended source for MSP billing reconciliation.",
+   "description": "License Info = current allocated seats. Monthly Usage = actual monthly consumption (both bill as one flat line via the Subscription Plan below). Per-Product Monthly Usage bills each GravityZone product as its own line, per the GravityZone Product Mapping list \u2014 see the Per-Product Licensing section on each GravityZone Company.",
    "fieldname": "license_metric",
    "fieldtype": "Select",
    "label": "License Metric",
-   "options": "License Info\nMonthly Usage"
+   "options": "License Info\nMonthly Usage\nPer-Product Monthly Usage"
   },
   {
    "default": "1",
@@ -72,13 +72,12 @@
    "options": "Company"
   },
   {
-   "description": "The Subscription Plan representing one GravityZone seat (its Item rate is multiplied by the license count on each customer's Subscription).",
+   "description": "Required for the License Info / Monthly Usage metrics (one flat line for all seats). Ignored when License Metric is Per-Product Monthly Usage \u2014 configure GravityZone Product Mapping instead.",
    "fieldname": "subscription_plan",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Subscription Plan",
-   "options": "Subscription Plan",
-   "reqd": 1
+   "options": "Subscription Plan"
   },
   {
    "fieldname": "review_thresholds_section",
@@ -108,7 +107,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-17 01:31:39.411336",
+ "modified": "2026-09-17 01:49:30.484563",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Settings",

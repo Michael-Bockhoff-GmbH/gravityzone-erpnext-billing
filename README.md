@@ -25,6 +25,14 @@ This intentionally reuses ERPNext's built-in recurring billing rather than
 generating Sales Invoices directly, so tax templates, payment terms, dunning,
 etc. all keep working exactly as they do for any other ERPNext Subscription.
 
+**Optional: bill by product, not just by seat.** GravityZone's Licensing API
+doesn't only report a flat seat count — it can break usage down per product
+(base Endpoint Security, EDR, Patch Management, Full Disk Encryption, Email
+Security, Exchange Protection, Sandbox Analyzer/ATI, Compliance Manager,
+...). Switch License Metric to **Per-Product Monthly Usage** to bill each of
+those as its own ERPNext Item/Subscription Plan line instead of one flat
+per-seat line — see [Per-product billing](#per-product-billing) below.
+
 ## Install
 
 ```bash
@@ -58,10 +66,13 @@ bench --site your-site install-app gravityzone_billing
    - **API Key** and **API Base URL** (defaults to the Cloud MSP endpoint;
      see `.env`-style comments in the doctype for on-prem Control Center
      installs).
-   - **License Metric** — *License Info* (current allocated seats) or
+   - **License Metric** — *License Info* (current allocated seats),
      *Monthly Usage* (actual monthly consumption; Bitdefender's recommended
-     source for billing reconciliation).
-   - **Default Company** and the **Subscription Plan** created above.
+     source for billing reconciliation), or *Per-Product Monthly Usage* (see
+     [Per-product billing](#per-product-billing)).
+   - **Default Company** and the **Subscription Plan** created above
+     (required for License Info / Monthly Usage; ignored for Per-Product
+     Monthly Usage, which uses GravityZone Product Mapping instead).
    - **Automatic Review Thresholds** — a synced change is held for manual
      review only when it exceeds **both** the percentage and seat-count
      thresholds here (default: 50% and 5 seats), not either one alone. A
@@ -86,10 +97,49 @@ bench --site your-site install-app gravityzone_billing
 
 If a synced license count changes by more than the configured thresholds,
 the **GravityZone Company** record is marked **Needs Review** with the new
-count shown in **Pending License Count** — the Subscription itself is left
-untouched. Open the record and click **Approve Pending Change** to apply it,
-or investigate first if the jump looks wrong (e.g. a GravityZone API error
-rather than a real seat increase).
+count shown in **Pending License Count** (or, in Per-Product mode, on the
+specific flagged row in **Product Lines**) — the Subscription itself is left
+untouched for that line. Open the record and click **Approve Pending
+Change(s)** to apply everything currently pending, or investigate first if
+the jump looks wrong (e.g. a GravityZone API error rather than real growth).
+
+## Per-product billing
+
+Set GravityZone Settings' **License Metric** to **Per-Product Monthly
+Usage** to bill each GravityZone product as its own ERPNext line instead of
+one flat per-seat line.
+
+1. **Create an Item + Subscription Plan per product you sell**, same as the
+   flat-mode setup but one pair per product (e.g. "GZ Endpoint Security" and
+   "GZ EDR" Items, each with their own Subscription Plan).
+2. **Add a row to the GravityZone Product Mapping list** for each one:
+   - **GravityZone Usage Field** — the counter name from GravityZone's
+     `getMonthlyUsagePerProductType` response. Known counters (verify against
+     your tenant, see below): `endpointMonthlyUsage` (base Endpoint
+     Security), `edrMonthlyUsage`, `patchManagementMonthlyUsage`,
+     `encryptionMonthlyUsage` (Full Disk Encryption), `emailSecurityMonthlyUsage`,
+     `exchangeMonthlyUsage` (Exchange Protection), `atsMonthlyUsage`
+     (Sandbox Analyzer / Advanced Threat Intelligence), `complianceMonthlyUsage`
+     (Compliance Manager).
+   - **Subscription Plan** — the plan created in step 1 for that product.
+   - **Enabled** — unchecked rows are skipped by the sync.
+3. Run **Sync Licenses Now**. Each mapped product gets its own row in that
+   company's **Product Lines** table (own baseline, own review flag, own
+   pending quantity) and its own plan row on the customer's *single*
+   Subscription — one Subscription per customer, multiple line items on it.
+
+**Migrating existing flat-plan customers:** map your existing per-seat
+Subscription Plan to whatever counter corresponds to it (usually
+`endpointMonthlyUsage`) and existing customers keep billing on that same
+plan under the new mode — any other product GravityZone reports for them
+just gets added as a new line on their existing Subscription. Nothing needs
+to be manually migrated.
+
+**Product-level review guard:** each product line is judged against its
+*own* history independently — e.g. an EDR count jumping from 3 to 50 gets
+flagged even if the customer's base Endpoint Security seats haven't changed
+at all, and vice versa; a big change on one product never blocks the others
+from syncing normally.
 
 ## Verifying against the real GravityZone API
 
@@ -100,11 +150,18 @@ than a captured live response. Before relying on this in production:
 
 1. Generate a real API key and enable verbose logging (or use `curl`/Postman)
    to call `getCompaniesList` (Network service) and `getLicenseInfo` /
-   `getMonthlyUsage` (Licensing service) directly.
+   `getMonthlyUsage` / `getMonthlyUsagePerProductType` (Licensing service)
+   directly.
 2. Compare the response shape to what `gravityzone_client.py` expects
    (`items`/`page`/`pagesCount` for lists; `usedLicenses`/`additionalLicenses`
    for license info). Adjust the small amount of field-name handling in that
    file if your tenant's response differs.
+3. If you plan to use Per-Product Monthly Usage billing, specifically check
+   `getMonthlyUsagePerProductType`'s response against the counter names
+   listed under [Per-product billing](#per-product-billing) — those names
+   were compiled from Bitdefender's documentation, not a captured response,
+   and are the part of this integration most likely to need adjusting for
+   your GravityZone version.
 
 ## Development
 
@@ -124,7 +181,9 @@ bench --site your-site run-tests --module gravityzone_billing.tests.test_sync_gu
 
 The full sync flow (create Subscription → increase quantity → no-op when
 unchanged → minimum-seat floor → large-jump review flag → manual approval →
-Sync History logging) is covered by
+Sync History logging, plus per-product mode: multi-line creation, one
+product flagging independently of the others, and approving only the
+flagged lines) is covered by
 `gravityzone_billing/doctype/gravityzone_company/test_gravityzone_company.py`.
 Note: running `bench run-tests --app gravityzone_billing` also triggers
 Frappe's automatic loading of test fixtures for every linked doctype

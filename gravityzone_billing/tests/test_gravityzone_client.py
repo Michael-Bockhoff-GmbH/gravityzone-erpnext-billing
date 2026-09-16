@@ -96,6 +96,35 @@ class TestGravityZoneClient(unittest.TestCase):
 
 		self.assertEqual(post.call_count, MAX_RETRIES)
 
+	def test_get_monthly_usage_per_product_type_merges_usages_list(self):
+		response = _mock_response(
+			{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"result": {
+					"usages": [
+						{"productType": 0, "endpointMonthlyUsage": 10, "edrMonthlyUsage": 3},
+						{"productType": 5, "phasrMonthlyUsage": 2},
+					]
+				},
+			}
+		)
+		with patch.object(self.client._session, "post", return_value=response):
+			usages = self.client.get_monthly_usage_per_product_type("company-1", "2026-09")
+
+		self.assertEqual(usages["endpointMonthlyUsage"], 10)
+		self.assertEqual(usages["edrMonthlyUsage"], 3)
+		self.assertEqual(usages["phasrMonthlyUsage"], 2)
+
+	def test_get_monthly_usage_per_product_type_handles_flat_dict(self):
+		response = _mock_response(
+			{"jsonrpc": "2.0", "id": 1, "result": {"endpointMonthlyUsage": 4}}
+		)
+		with patch.object(self.client._session, "post", return_value=response):
+			usages = self.client.get_monthly_usage_per_product_type("company-1", "2026-09")
+
+		self.assertEqual(usages, {"endpointMonthlyUsage": 4})
+
 	def test_throttles_between_calls(self):
 		response = _mock_response({"jsonrpc": "2.0", "id": 1, "result": {"usedLicenses": 1}})
 		with (

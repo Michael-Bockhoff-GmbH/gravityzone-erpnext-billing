@@ -1,0 +1,84 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "autoname": "field:gz_usage_field",
+ "creation": "2026-09-17 01:49:29.975323",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "label",
+  "gz_usage_field",
+  "column_break_product_mapping",
+  "subscription_plan",
+  "enabled"
+ ],
+ "fields": [
+  {
+   "description": "Friendly name shown in sync messages and history, e.g. \"EDR\".",
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Product Label",
+   "reqd": 1
+  },
+  {
+   "description": "The counter name from GravityZone's getMonthlyUsagePerProductType response, e.g. endpointMonthlyUsage, edrMonthlyUsage, patchManagementMonthlyUsage, encryptionMonthlyUsage, emailSecurityMonthlyUsage, exchangeMonthlyUsage, atsMonthlyUsage, complianceMonthlyUsage. Verify exact names against a real API response for your tenant before relying on this.",
+   "fieldname": "gz_usage_field",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "GravityZone Usage Field",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "column_break_product_mapping",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Billed with this counter's quantity on each customer's Subscription.",
+   "fieldname": "subscription_plan",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Subscription Plan",
+   "options": "Subscription Plan",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-17 01:49:29.975323",
+ "modified_by": "Administrator",
+ "module": "GravityZone Billing",
+ "name": "GravityZone Product Mapping",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "label",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "label"
+}

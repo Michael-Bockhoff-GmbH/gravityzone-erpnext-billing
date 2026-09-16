@@ -14,6 +14,11 @@ def after_install():
 	create_gravityzone_sync_history()
 	add_review_threshold_fields_to_settings()
 	add_review_fields_to_company()
+	create_gravityzone_product_mapping()
+	create_gravityzone_company_product()
+	add_product_field_to_sync_history()
+	add_product_lines_field_to_company()
+	extend_license_metric_and_relax_plan()
 
 
 def create_gravityzone_settings():
@@ -362,6 +367,242 @@ def add_review_fields_to_company():
 			},
 		)
 		changed = True
+
+	if changed:
+		doc.save(ignore_permissions=True)
+
+
+def create_gravityzone_product_mapping():
+	"""A global rate card: which GravityZone usage counter bills against
+	which ERPNext Subscription Plan. Shared across all companies.
+	"""
+	if frappe.db.exists("DocType", "GravityZone Product Mapping"):
+		return
+
+	frappe.get_doc(
+		{
+			"doctype": "DocType",
+			"name": "GravityZone Product Mapping",
+			"module": "GravityZone Billing",
+			"custom": 0,
+			"autoname": "field:gz_usage_field",
+			"title_field": "label",
+			"sort_field": "label",
+			"sort_order": "ASC",
+			"fields": [
+				{
+					"fieldname": "label",
+					"fieldtype": "Data",
+					"label": "Product Label",
+					"reqd": 1,
+					"in_list_view": 1,
+					"description": "Friendly name shown in sync messages and history, e.g. \"EDR\".",
+				},
+				{
+					"fieldname": "gz_usage_field",
+					"fieldtype": "Data",
+					"label": "GravityZone Usage Field",
+					"reqd": 1,
+					"unique": 1,
+					"in_list_view": 1,
+					"description": (
+						"The counter name from GravityZone's getMonthlyUsagePerProductType response, e.g. "
+						"endpointMonthlyUsage, edrMonthlyUsage, patchManagementMonthlyUsage, "
+						"encryptionMonthlyUsage, emailSecurityMonthlyUsage, exchangeMonthlyUsage, "
+						"atsMonthlyUsage, complianceMonthlyUsage. Verify exact names against a real API "
+						"response for your tenant before relying on this."
+					),
+				},
+				{"fieldname": "column_break_product_mapping", "fieldtype": "Column Break"},
+				{
+					"fieldname": "subscription_plan",
+					"fieldtype": "Link",
+					"options": "Subscription Plan",
+					"label": "Subscription Plan",
+					"reqd": 1,
+					"in_list_view": 1,
+					"description": "Billed with this counter's quantity on each customer's Subscription.",
+				},
+				{
+					"fieldname": "enabled",
+					"fieldtype": "Check",
+					"label": "Enabled",
+					"default": "1",
+					"in_list_view": 1,
+				},
+			],
+			"permissions": [
+				{
+					"role": "System Manager",
+					"read": 1,
+					"write": 1,
+					"create": 1,
+					"delete": 1,
+					"print": 1,
+					"email": 1,
+					"share": 1,
+					"export": 1,
+				}
+			],
+		}
+	).insert(ignore_permissions=True)
+
+
+def create_gravityzone_company_product():
+	"""Per-product sync state for one company: independent baseline, review
+	flag, and pending quantity per GravityZone product/module.
+	"""
+	if frappe.db.exists("DocType", "GravityZone Company Product"):
+		return
+
+	frappe.get_doc(
+		{
+			"doctype": "DocType",
+			"name": "GravityZone Company Product",
+			"module": "GravityZone Billing",
+			"custom": 0,
+			"istable": 1,
+			"editable_grid": 1,
+			"fields": [
+				{
+					"fieldname": "label",
+					"fieldtype": "Data",
+					"label": "Product",
+					"in_list_view": 1,
+					"read_only": 1,
+				},
+				{
+					"fieldname": "gz_usage_field",
+					"fieldtype": "Data",
+					"label": "GravityZone Usage Field",
+					"in_list_view": 1,
+					"read_only": 1,
+				},
+				{
+					"fieldname": "subscription_plan",
+					"fieldtype": "Link",
+					"options": "Subscription Plan",
+					"label": "Subscription Plan",
+					"in_list_view": 1,
+					"read_only": 1,
+				},
+				{
+					"fieldname": "last_synced_qty",
+					"fieldtype": "Int",
+					"label": "Last Synced Qty",
+					"in_list_view": 1,
+					"read_only": 1,
+				},
+				{
+					"fieldname": "last_synced_on",
+					"fieldtype": "Datetime",
+					"label": "Last Synced On",
+					"read_only": 1,
+				},
+				{
+					"fieldname": "needs_review",
+					"fieldtype": "Check",
+					"label": "Needs Review",
+					"in_list_view": 1,
+					"read_only": 1,
+				},
+				{
+					"fieldname": "pending_qty",
+					"fieldtype": "Int",
+					"label": "Pending Qty",
+					"in_list_view": 1,
+					"read_only": 1,
+				},
+			],
+			"permissions": [
+				{"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+			],
+		}
+	).insert(ignore_permissions=True)
+
+
+def add_product_field_to_sync_history():
+	doc = frappe.get_doc("DocType", "GravityZone Sync History")
+	existing = {f.fieldname for f in doc.fields}
+	if "product" in existing:
+		return
+
+	# Insert right after "timestamp" so it reads naturally in the grid.
+	idx = next((i for i, f in enumerate(doc.fields) if f.fieldname == "timestamp"), len(doc.fields) - 1)
+	doc.append(
+		"fields",
+		{
+			"fieldname": "product",
+			"fieldtype": "Data",
+			"label": "Product",
+			"in_list_view": 1,
+			"description": "Blank for a flat-plan sync; the product label for a per-product sync.",
+		},
+		idx + 1,
+	)
+	doc.save(ignore_permissions=True)
+
+
+def add_product_lines_field_to_company():
+	doc = frappe.get_doc("DocType", "GravityZone Company")
+	existing = {f.fieldname for f in doc.fields}
+	changed = False
+
+	if "product_lines_section" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "product_lines_section",
+				"fieldtype": "Section Break",
+				"label": "Per-Product Licensing",
+				"collapsible": 1,
+				"description": (
+					"Only used when GravityZone Settings' License Metric is \"Per-Product Monthly "
+					"Usage\" — one row per mapped GravityZone product, each tracked and reviewed "
+					"independently."
+				),
+			},
+		)
+		changed = True
+
+	if "product_lines" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "product_lines",
+				"fieldtype": "Table",
+				"options": "GravityZone Company Product",
+				"label": "Product Lines",
+			},
+		)
+		changed = True
+
+	if changed:
+		doc.save(ignore_permissions=True)
+
+
+def extend_license_metric_and_relax_plan():
+	doc = frappe.get_doc("DocType", "GravityZone Settings")
+	changed = False
+
+	for field in doc.fields:
+		if field.fieldname == "license_metric" and "Per-Product Monthly Usage" not in (field.options or ""):
+			field.options = "License Info\nMonthly Usage\nPer-Product Monthly Usage"
+			field.description = (
+				"License Info = current allocated seats. Monthly Usage = actual monthly consumption "
+				"(both bill as one flat line via the Subscription Plan below). Per-Product Monthly "
+				"Usage bills each GravityZone product as its own line, per the GravityZone Product "
+				"Mapping list — see the Per-Product Licensing section on each GravityZone Company."
+			)
+			changed = True
+		if field.fieldname == "subscription_plan" and field.reqd:
+			field.reqd = 0
+			field.description = (
+				"Required for the License Info / Monthly Usage metrics (one flat line for all "
+				"seats). Ignored when License Metric is Per-Product Monthly Usage — configure "
+				"GravityZone Product Mapping instead."
+			)
+			changed = True
 
 	if changed:
 		doc.save(ignore_permissions=True)

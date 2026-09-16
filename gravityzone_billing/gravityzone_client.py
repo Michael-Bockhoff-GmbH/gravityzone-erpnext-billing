@@ -145,3 +145,31 @@ class GravityZoneClient:
 		to the point-in-time allocation returned by ``getLicenseInfo``.
 		"""
 		return self._call("licensing", "getMonthlyUsage", {"companyId": company_id, "targetMonth": target_month})
+
+	def get_monthly_usage_per_product_type(self, company_id, target_month):
+		"""Monthly usage broken down by GravityZone product (Endpoint Security's
+		own add-on modules — EDR, Patch Management, Full Disk Encryption, Email
+		Security, etc. — plus any other product types the company holds), unlike
+		``get_monthly_usage`` which only covers the default Endpoint Security
+		product.
+
+		Returns a flat ``{usage_field: count}`` dict merged across whatever
+		shape the API responds with (a top-level dict of counters, or a
+		``usages`` list of per-product-type dicts — documented examples suggest
+		the latter, but this normalizes either way).
+		"""
+		result = (
+			self._call(
+				"licensing",
+				"getMonthlyUsagePerProductType",
+				{"companyId": company_id, "targetMonth": target_month},
+			)
+			or {}
+		)
+		if isinstance(result, dict) and isinstance(result.get("usages"), list):
+			merged = {}
+			for usage in result["usages"]:
+				if isinstance(usage, dict):
+					merged.update(usage)
+			return merged
+		return result if isinstance(result, dict) else {}

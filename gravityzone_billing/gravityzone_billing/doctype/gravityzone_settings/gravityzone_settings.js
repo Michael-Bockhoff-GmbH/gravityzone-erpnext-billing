@@ -26,5 +26,11 @@ frappe.ui.form.on("GravityZone Settings", {
 				frappe.msgprint(__("Sync complete. Check the GravityZone Company list for results."));
 			});
 		});
+
+		if (frm.doc.license_metric === "Per-Product Monthly Usage") {
+			frm.add_custom_button(__("Manage Product Mappings"), () => {
+				frappe.set_route("List", "GravityZone Product Mapping");
+			});
+		}
 	},
 });
