@@ -1,0 +1,107 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "creation": "2026-09-16 20:34:42.475698",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "connection_section",
+  "api_key",
+  "base_url",
+  "column_break_connection",
+  "license_metric",
+  "sync_enabled",
+  "billing_section",
+  "default_company",
+  "subscription_plan"
+ ],
+ "fields": [
+  {
+   "fieldname": "connection_section",
+   "fieldtype": "Section Break",
+   "label": "GravityZone Connection"
+  },
+  {
+   "description": "Control Center &gt; My Account &gt; API keys. The key needs access to the Network and Licensing APIs (Partner tier) to list companies and read license counts.",
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key"
+  },
+  {
+   "default": "https://cloud.gravityzone.bitdefender.com/api/v1.0/jsonrpc",
+   "fieldname": "base_url",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "API Base URL",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_connection",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "License Info",
+   "description": "License Info = current allocated seats (getLicenseInfo). Monthly Usage = actual monthly consumption (getMonthlyUsage) \u2014 Bitdefender's recommended source for MSP billing reconciliation.",
+   "fieldname": "license_metric",
+   "fieldtype": "Select",
+   "label": "License Metric",
+   "options": "License Info\nMonthly Usage"
+  },
+  {
+   "default": "1",
+   "fieldname": "sync_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Daily Scheduled Sync"
+  },
+  {
+   "fieldname": "billing_section",
+   "fieldtype": "Section Break",
+   "label": "Billing Defaults"
+  },
+  {
+   "description": "Used when creating a new Subscription for a customer that doesn't have one yet.",
+   "fieldname": "default_company",
+   "fieldtype": "Link",
+   "label": "Default Company",
+   "options": "Company"
+  },
+  {
+   "description": "The Subscription Plan representing one GravityZone seat (its Item rate is multiplied by the license count on each customer's Subscription).",
+   "fieldname": "subscription_plan",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Subscription Plan",
+   "options": "Subscription Plan",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-16 20:34:42.475698",
+ "modified_by": "Administrator",
+ "module": "GravityZone Billing",
+ "name": "GravityZone Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

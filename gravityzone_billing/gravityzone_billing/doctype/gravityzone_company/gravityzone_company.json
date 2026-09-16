@@ -1,0 +1,121 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "autoname": "field:gz_company_id",
+ "creation": "2026-09-16 20:34:42.850239",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "gz_company_id",
+  "gz_company_name",
+  "column_break_mapping",
+  "customer",
+  "min_qty",
+  "status_section",
+  "subscription",
+  "last_synced_qty",
+  "column_break_status",
+  "last_synced_on",
+  "last_sync_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "gz_company_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "GravityZone Company ID",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "gz_company_name",
+   "fieldtype": "Data",
+   "label": "GravityZone Company Name"
+  },
+  {
+   "fieldname": "column_break_mapping",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "ERPNext Customer",
+   "options": "Customer",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Floor applied to the synced license count, e.g. for a minimum-commit contract.",
+   "fieldname": "min_qty",
+   "fieldtype": "Int",
+   "label": "Minimum Billable Seats",
+   "non_negative": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Sync Status"
+  },
+  {
+   "fieldname": "subscription",
+   "fieldtype": "Link",
+   "label": "Subscription",
+   "options": "Subscription",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_synced_qty",
+   "fieldtype": "Int",
+   "label": "Last Synced License Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Last Synced On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_sync_message",
+   "fieldtype": "Small Text",
+   "label": "Last Sync Message",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-16 20:34:42.850239",
+ "modified_by": "Administrator",
+ "module": "GravityZone Billing",
+ "name": "GravityZone Company",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "gz_company_name"
+}

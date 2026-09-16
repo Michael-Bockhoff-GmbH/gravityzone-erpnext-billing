@@ -8,7 +8,7 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["frappe/erpnext"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -85,8 +85,7 @@ app_license = "mit"
 # Installation
 # ------------
 
-# before_install = "gravityzone_billing.install.before_install"
-# after_install = "gravityzone_billing.install.after_install"
+after_install = "gravityzone_billing.setup.after_install"
 
 # Uninstallation
 # ------------
@@ -155,23 +154,11 @@ app_license = "mit"
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"gravityzone_billing.tasks.all"
-# 	],
-# 	"daily": [
-# 		"gravityzone_billing.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"gravityzone_billing.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"gravityzone_billing.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"gravityzone_billing.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"daily": [
+		"gravityzone_billing.sync.sync_licenses",
+	],
+}
 
 # Testing
 # -------
