@@ -12,7 +12,8 @@
   "gz_usage_field",
   "column_break_product_mapping",
   "subscription_plan",
-  "enabled"
+  "enabled",
+  "item"
  ],
  "fields": [
   {
@@ -37,13 +38,12 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Billed with this counter's quantity on each customer's Subscription.",
+   "description": "Required when Billing Backend is ERPNext Subscription.",
    "fieldname": "subscription_plan",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Subscription Plan",
-   "options": "Subscription Plan",
-   "reqd": 1
+   "options": "Subscription Plan"
   },
   {
    "default": "1",
@@ -51,12 +51,20 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Enabled"
+  },
+  {
+   "description": "Used instead of Subscription Plan when GravityZone Settings' Billing Backend is ALYF Simple Subscription.",
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item (Simple Subscription)",
+   "options": "Item"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-17 01:49:29.975323",
+ "modified": "2026-09-17 02:04:32.132497",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Product Mapping",

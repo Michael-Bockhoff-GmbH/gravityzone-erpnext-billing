@@ -1,9 +1,9 @@
 # GravityZone Billing
 
 A Frappe/ERPNext app that syncs license (seat) counts from **Bitdefender
-GravityZone** (MSP/Partner) into ERPNext's native **Subscription** doctype,
-so recurring invoices scale automatically with license count — no manual
-invoice editing when a customer adds or removes seats.
+GravityZone** (MSP/Partner) into a recurring-billing document in ERPNext,
+so invoices scale automatically with license count — no manual invoice
+editing when a customer adds or removes seats.
 
 ## How it works
 
@@ -13,17 +13,25 @@ invoice editing when a customer adds or removes seats.
 2. A daily scheduled job (or the **Sync Licenses Now** button) calls the
    GravityZone Licensing API for each mapped company and reads the current
    seat count.
-3. It finds (or creates) that customer's **Subscription** against a single,
-   shared **Subscription Plan** (e.g. "Bitdefender GravityZone License",
-   priced per seat) and sets the plan's quantity to match.
-4. ERPNext's own scheduler generates the invoice at the end of each billing
-   period using whatever quantity is currently set — so a seat-count change
-   picked up by the sync before that run is reflected automatically, with no
-   custom invoicing logic to maintain.
+3. It finds (or creates) that customer's recurring-billing document and sets
+   its quantity to match. Two **Billing Backends** are supported — see
+   [Billing backend](#billing-backend):
+   - **ERPNext Subscription** (default): core ERPNext's own Subscription
+     doctype, against a single, shared **Subscription Plan** (e.g.
+     "Bitdefender GravityZone License", priced per seat).
+   - **ALYF Simple Subscription**: [alyf-de/simple_subscription](https://github.com/alyf-de/simple_subscription),
+     a lighter alternative some shops use instead, billing an **Item**
+     directly with no separate Plan object.
+4. The chosen backend's own scheduler generates the invoice at the end of
+   each billing period using whatever quantity is currently set — so a
+   seat-count change picked up by the sync before that run is reflected
+   automatically, with no custom invoicing logic to maintain.
 
-This intentionally reuses ERPNext's built-in recurring billing rather than
-generating Sales Invoices directly, so tax templates, payment terms, dunning,
-etc. all keep working exactly as they do for any other ERPNext Subscription.
+This intentionally reuses each backend's built-in recurring billing rather
+than generating Sales Invoices directly (for ERPNext Subscription) — or,
+for Simple Subscription, defers entirely to that app's own invoice
+generation — so tax templates, payment terms, dunning, etc. all keep
+working exactly as they do for any other document of that type.
 
 **Optional: bill by product, not just by seat.** GravityZone's Licensing API
 doesn't only report a flat seat count — it can break usage down per product
@@ -39,6 +47,15 @@ per-seat line — see [Per-product billing](#per-product-billing) below.
 cd $PATH_TO_YOUR_BENCH
 bench get-app https://github.com/Michael-Bockhoff-GmbH/gravityzone-erpnext-billing --branch main
 bench --site your-site install-app gravityzone_billing
+```
+
+If you want the **ALYF Simple Subscription** billing backend, also get and
+install that app (it's optional — everything above works with core ERPNext
+Subscription alone):
+
+```bash
+bench get-app https://github.com/alyf-de/simple_subscription --branch version-16
+bench --site your-site install-app simple_subscription
 ```
 
 ## Setup
@@ -59,9 +76,11 @@ bench --site your-site install-app gravityzone_billing
    > integration** with just Network + Licensing checked — leave Companies,
    > Accounts, Policies, and Reports unchecked — so a leak here can't be
    > used to create/delete/suspend companies or touch anything else.
-2. **Create the billing Item and Subscription Plan in ERPNext** (Selling /
-   Accounts): one non-stock Item (e.g. "GravityZone License Seat") priced
-   per seat, and one **Subscription Plan** using that Item.
+2. **Create the billing Item** in ERPNext (Selling): one non-stock Item
+   (e.g. "GravityZone License Seat") priced per seat. If you're using the
+   **ERPNext Subscription** backend, also create a **Subscription Plan**
+   using that Item — Simple Subscription doesn't use Subscription Plans at
+   all, it bills the Item directly.
 3. Open **GravityZone Settings** (single doctype) and fill in:
    - **API Key** and **API Base URL** (defaults to the Cloud MSP endpoint;
      see `.env`-style comments in the doctype for on-prem Control Center
@@ -70,9 +89,12 @@ bench --site your-site install-app gravityzone_billing
      *Monthly Usage* (actual monthly consumption; Bitdefender's recommended
      source for billing reconciliation), or *Per-Product Monthly Usage* (see
      [Per-product billing](#per-product-billing)).
-   - **Default Company** and the **Subscription Plan** created above
-     (required for License Info / Monthly Usage; ignored for Per-Product
-     Monthly Usage, which uses GravityZone Product Mapping instead).
+   - **Billing Backend** — see [Billing backend](#billing-backend).
+   - **Default Company**, and either the **Subscription Plan** (ERPNext
+     Subscription backend) or **Item** (Simple Subscription backend)
+     created above (required for License Info / Monthly Usage; ignored for
+     Per-Product Monthly Usage, which uses GravityZone Product Mapping
+     instead).
    - **Automatic Review Thresholds** — a synced change is held for manual
      review only when it exceeds **both** the percentage and seat-count
      thresholds here (default: 50% and 5 seats), not either one alone. A
@@ -103,15 +125,46 @@ untouched for that line. Open the record and click **Approve Pending
 Change(s)** to apply everything currently pending, or investigate first if
 the jump looks wrong (e.g. a GravityZone API error rather than real growth).
 
+## Billing backend
+
+GravityZone Settings' **Billing Backend** picks which ERPNext-side doctype
+actually gets billed:
+
+| | ERPNext Subscription (default) | ALYF Simple Subscription |
+|---|---|---|
+| Billing target | **Subscription Plan** (a template: Item + price + interval) | **Item** directly, no separate Plan object |
+| Document state | Draft/Active, no submit step | Must be **submitted** to generate invoices — this app submits it automatically on creation |
+| Invoice generation | Core ERPNext's own Subscription scheduler | Simple Subscription's own scheduler ([alyf-de/simple_subscription](https://github.com/alyf-de/simple_subscription)) |
+| Updating quantity on an existing document | Normal field update + save | Direct write to the already-submitted child row's quantity (Simple Subscription's `items` table isn't editable after submit through the normal UI/API) — see `billing_backends.py` |
+
+They are **not interchangeable data models** — Simple Subscription has no
+concept of a Subscription Plan at all. This app abstracts both behind the
+same sync logic (`gravityzone_billing/billing_backends.py`), so switching
+the Billing Backend setting is safe, but:
+
+- **Fill in the right target field.** Subscription Plan for ERPNext
+  Subscription, Item for Simple Subscription — both on GravityZone Settings
+  (flat mode) and on each GravityZone Product Mapping row (per-product
+  mode).
+- **Switching backends for an already-onboarded customer creates a new
+  document** under the new backend on their next sync; the old one is left
+  as-is (this mirrors Simple Subscription's own stated approach for
+  migrating away from core Subscription — "you have to cancel them
+  manually"). It is not an automatic migration.
+- Everything else — the review guard, Sync History, per-product mode,
+  Discover Companies — works identically regardless of which backend is
+  active.
+
 ## Per-product billing
 
 Set GravityZone Settings' **License Metric** to **Per-Product Monthly
 Usage** to bill each GravityZone product as its own ERPNext line instead of
 one flat per-seat line.
 
-1. **Create an Item + Subscription Plan per product you sell**, same as the
-   flat-mode setup but one pair per product (e.g. "GZ Endpoint Security" and
-   "GZ EDR" Items, each with their own Subscription Plan).
+1. **Create an Item per product you sell** (e.g. "GZ Endpoint Security" and
+   "GZ EDR"), plus a **Subscription Plan** per Item if you're using the
+   ERPNext Subscription backend (skip that for Simple Subscription, which
+   bills Items directly).
 2. **Add a row to the GravityZone Product Mapping list** for each one:
    - **GravityZone Usage Field** — the counter name from GravityZone's
      `getMonthlyUsagePerProductType` response. Known counters (verify against
@@ -121,19 +174,20 @@ one flat per-seat line.
      `exchangeMonthlyUsage` (Exchange Protection), `atsMonthlyUsage`
      (Sandbox Analyzer / Advanced Threat Intelligence), `complianceMonthlyUsage`
      (Compliance Manager).
-   - **Subscription Plan** — the plan created in step 1 for that product.
+   - **Subscription Plan** or **Item** — whichever matches GravityZone
+     Settings' Billing Backend.
    - **Enabled** — unchecked rows are skipped by the sync.
 3. Run **Sync Licenses Now**. Each mapped product gets its own row in that
    company's **Product Lines** table (own baseline, own review flag, own
-   pending quantity) and its own plan row on the customer's *single*
-   Subscription — one Subscription per customer, multiple line items on it.
+   pending quantity) and its own line on the customer's *single* billing
+   document — one document per customer, multiple line items on it.
 
 **Migrating existing flat-plan customers:** map your existing per-seat
-Subscription Plan to whatever counter corresponds to it (usually
+Subscription Plan/Item to whatever counter corresponds to it (usually
 `endpointMonthlyUsage`) and existing customers keep billing on that same
-plan under the new mode — any other product GravityZone reports for them
-just gets added as a new line on their existing Subscription. Nothing needs
-to be manually migrated.
+line under the new mode — any other product GravityZone reports for them
+just gets added as a new line on their existing document. Nothing needs to
+be manually migrated.
 
 **Product-level review guard:** each product line is judged against its
 *own* history independently — e.g. an EDR count jumping from 3 to 50 gets
@@ -183,7 +237,9 @@ The full sync flow (create Subscription → increase quantity → no-op when
 unchanged → minimum-seat floor → large-jump review flag → manual approval →
 Sync History logging, plus per-product mode: multi-line creation, one
 product flagging independently of the others, and approving only the
-flagged lines) is covered by
+flagged lines — for both the ERPNext Subscription and, if
+`simple_subscription` is installed, ALYF Simple Subscription backends) is
+covered by
 `gravityzone_billing/doctype/gravityzone_company/test_gravityzone_company.py`.
 Note: running `bench run-tests --app gravityzone_billing` also triggers
 Frappe's automatic loading of test fixtures for every linked doctype

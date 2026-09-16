@@ -10,6 +10,7 @@
   "label",
   "gz_usage_field",
   "subscription_plan",
+  "item",
   "last_synced_qty",
   "last_synced_on",
   "needs_review",
@@ -65,13 +66,20 @@
    "in_list_view": 1,
    "label": "Pending Qty",
    "read_only": 1
+  },
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Item (Simple Subscription)",
+   "options": "Item",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-09-17 01:49:30.188374",
+ "modified": "2026-09-17 02:04:32.243577",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Company Product",

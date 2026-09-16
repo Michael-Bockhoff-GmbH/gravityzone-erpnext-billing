@@ -14,6 +14,7 @@
   "customer",
   "min_qty",
   "status_section",
+  "billing_doctype",
   "subscription",
   "last_synced_qty",
   "column_break_status",
@@ -68,9 +69,9 @@
   },
   {
    "fieldname": "subscription",
-   "fieldtype": "Link",
+   "fieldtype": "Dynamic Link",
    "label": "Subscription",
-   "options": "Subscription",
+   "options": "billing_doctype",
    "read_only": 1
   },
   {
@@ -134,12 +135,20 @@
    "fieldtype": "Table",
    "label": "Product Lines",
    "options": "GravityZone Company Product"
+  },
+  {
+   "description": "Which doctype the Subscription field below points to.",
+   "fieldname": "billing_doctype",
+   "fieldtype": "Select",
+   "label": "Billing Doctype",
+   "options": "Subscription\nSimple Subscription",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-17 01:49:30.372575",
+ "modified": "2026-09-17 02:04:32.338235",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Company",

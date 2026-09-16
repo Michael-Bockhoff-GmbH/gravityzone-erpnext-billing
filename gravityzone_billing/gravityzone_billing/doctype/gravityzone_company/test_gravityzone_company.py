@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Michael Bockhoff GmbH and Contributors
 # See license.txt
 
+import unittest
 from unittest.mock import patch
 
 import frappe
@@ -343,3 +344,130 @@ class IntegrationTestGravityZonePerProduct(IntegrationTestCase):
 		subscription = frappe.get_doc("Subscription", doc.subscription)
 		plans = {p.plan: p.qty for p in subscription.plans}
 		self.assertEqual(plans, {"GZ Test Endpoint Plan": 10, "GZ Test EDR Plan": 20})
+
+
+class IntegrationTestSimpleSubscriptionBackend(IntegrationTestCase):
+	"""ALYF Simple Subscription (github.com/alyf-de/simple_subscription) as
+	the billing backend instead of core ERPNext Subscription: create+submit,
+	update via a direct child-row write (Simple Subscription doesn't allow
+	normal edits to a submitted document's items table), and the review
+	guard/approval flow. Skipped if that optional app isn't installed.
+	"""
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		if not frappe.db.exists("DocType", "Simple Subscription"):
+			raise unittest.SkipTest("simple_subscription app not installed")
+
+		cls.customer = frappe.db.get_value("Customer", {}, "name") or cls._make_customer()
+		cls.company = frappe.db.get_value("Company", {}, "name")
+
+		if not frappe.db.exists("Item", "GZ-TEST-SEAT"):
+			frappe.get_doc(
+				{
+					"doctype": "Item",
+					"item_code": "GZ-TEST-SEAT",
+					"item_name": "GravityZone Test Seat",
+					"item_group": frappe.db.get_value("Item Group", {}, "name") or "All Item Groups",
+					"stock_uom": "Nos",
+					"is_stock_item": 0,
+				}
+			).insert(ignore_permissions=True)
+
+	@classmethod
+	def _make_customer(cls):
+		doc = frappe.get_doc({"doctype": "Customer", "customer_name": "GZ Test Customer"})
+		doc.insert(ignore_permissions=True)
+		return doc.name
+
+	def setUp(self):
+		settings = frappe.get_single("GravityZone Settings")
+		settings.api_key = "dummy"
+		settings.base_url = "https://cloud.gravityzone.bitdefender.com/api/v1.0/jsonrpc"
+		settings.license_metric = "License Info"
+		settings.billing_backend = "ALYF Simple Subscription"
+		settings.item = "GZ-TEST-SEAT"
+		settings.default_company = self.company
+		settings.sync_enabled = 1
+		settings.review_threshold_percent = 50
+		settings.review_threshold_min_seats = 5
+		settings.save(ignore_permissions=True)
+
+		if frappe.db.exists("GravityZone Company", "gz-co-3"):
+			frappe.delete_doc("GravityZone Company", "gz-co-3", force=True, ignore_permissions=True)
+
+		frappe.get_doc(
+			{
+				"doctype": "GravityZone Company",
+				"gz_company_id": "gz-co-3",
+				"gz_company_name": "Test Co 3",
+				"customer": self.customer,
+			}
+		).insert(ignore_permissions=True)
+
+	def tearDown(self):
+		doc = frappe.get_doc("GravityZone Company", "gz-co-3")
+		if doc.subscription and doc.billing_doctype and frappe.db.exists(doc.billing_doctype, doc.subscription):
+			billing_doc = frappe.get_doc(doc.billing_doctype, doc.subscription)
+			if billing_doc.docstatus == 1:
+				billing_doc.cancel()
+			frappe.delete_doc(doc.billing_doctype, doc.subscription, force=True, ignore_permissions=True)
+		frappe.delete_doc("GravityZone Company", "gz-co-3", force=True, ignore_permissions=True)
+
+		frappe.db.set_single_value("GravityZone Settings", "billing_backend", "ERPNext Subscription")
+
+	def test_first_sync_creates_and_submits_a_simple_subscription(self):
+		with _mock_license_info(5):
+			sync_module.sync_licenses()
+
+		doc = frappe.get_doc("GravityZone Company", "gz-co-3")
+		self.assertEqual(doc.billing_doctype, "Simple Subscription")
+		self.assertEqual(doc.last_synced_qty, 5)
+
+		simple_sub = frappe.get_doc("Simple Subscription", doc.subscription)
+		self.assertEqual(simple_sub.docstatus, 1)
+		self.assertEqual(simple_sub.items[0].item, "GZ-TEST-SEAT")
+		self.assertEqual(simple_sub.items[0].qty, 5)
+
+	def test_updates_qty_on_the_submitted_document(self):
+		with _mock_license_info(5):
+			sync_module.sync_licenses()
+		with _mock_license_info(8):
+			sync_module.sync_licenses()
+
+		doc = frappe.get_doc("GravityZone Company", "gz-co-3")
+		self.assertEqual(doc.last_synced_qty, 8)
+
+		simple_sub = frappe.get_doc("Simple Subscription", doc.subscription)
+		self.assertEqual(simple_sub.docstatus, 1)
+		self.assertEqual(simple_sub.items[0].qty, 8)
+
+	def test_large_jump_flagged_and_document_left_untouched(self):
+		with _mock_license_info(8):
+			sync_module.sync_licenses()
+		with _mock_license_info(60):
+			sync_module.sync_licenses()
+
+		doc = frappe.get_doc("GravityZone Company", "gz-co-3")
+		self.assertTrue(doc.needs_review)
+		self.assertEqual(doc.pending_qty, 60)
+		self.assertEqual(doc.last_synced_qty, 8)
+
+		simple_sub = frappe.get_doc("Simple Subscription", doc.subscription)
+		self.assertEqual(simple_sub.items[0].qty, 8)
+
+	def test_approve_all_pending_applies_it(self):
+		with _mock_license_info(8):
+			sync_module.sync_licenses()
+		with _mock_license_info(60):
+			sync_module.sync_licenses()
+
+		approve_all_pending(company_name="gz-co-3")
+
+		doc = frappe.get_doc("GravityZone Company", "gz-co-3")
+		self.assertFalse(doc.needs_review)
+		self.assertEqual(doc.last_synced_qty, 60)
+
+		simple_sub = frappe.get_doc("Simple Subscription", doc.subscription)
+		self.assertEqual(simple_sub.items[0].qty, 60)

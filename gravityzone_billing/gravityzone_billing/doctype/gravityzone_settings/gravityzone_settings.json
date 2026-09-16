@@ -19,7 +19,13 @@
   "review_thresholds_section",
   "review_threshold_percent",
   "column_break_review_thresholds",
-  "review_threshold_min_seats"
+  "review_threshold_min_seats",
+  "billing_backend_section",
+  "billing_backend",
+  "item",
+  "simple_subscription_frequency",
+  "simple_subscription_period_type",
+  "simple_subscription_billing_time"
  ],
  "fields": [
   {
@@ -101,13 +107,59 @@
    "fieldtype": "Int",
    "label": "Flag Changes Over (seats)",
    "non_negative": 1
+  },
+  {
+   "fieldname": "billing_backend_section",
+   "fieldtype": "Section Break",
+   "label": "Billing Backend"
+  },
+  {
+   "default": "ERPNext Subscription",
+   "description": "Which recurring-billing doctype to drive. ERPNext Subscription is core ERPNext's own doctype (uses Subscription Plan, above / on each Product Mapping row). ALYF Simple Subscription (github.com/alyf-de/simple_subscription) has no Plan concept \u2014 it bills an Item directly \u2014 so fill in the Item field(s) instead when this is selected. Switching backends for an already-onboarded customer creates a new document under the new backend; the old one is left as-is for you to cancel.",
+   "fieldname": "billing_backend",
+   "fieldtype": "Select",
+   "label": "Billing Backend",
+   "options": "ERPNext Subscription\nALYF Simple Subscription"
+  },
+  {
+   "depends_on": "eval:doc.billing_backend == 'ALYF Simple Subscription'",
+   "description": "Used instead of Subscription Plan for License Info / Monthly Usage billing when Billing Backend is ALYF Simple Subscription.",
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "label": "Item (Simple Subscription)",
+   "options": "Item"
+  },
+  {
+   "default": "Monthly",
+   "depends_on": "eval:doc.billing_backend == 'ALYF Simple Subscription'",
+   "description": "Used when creating a new Simple Subscription for a customer that doesn't have one yet.",
+   "fieldname": "simple_subscription_frequency",
+   "fieldtype": "Select",
+   "label": "Frequency",
+   "options": "Monthly\nQuarterly\nHalfyearly\nYearly\nBiennial\nTriennial"
+  },
+  {
+   "default": "calendar months",
+   "depends_on": "eval:doc.billing_backend == 'ALYF Simple Subscription'",
+   "fieldname": "simple_subscription_period_type",
+   "fieldtype": "Select",
+   "label": "Billing Period Is Based On",
+   "options": "calendar months\nstart date"
+  },
+  {
+   "default": "after end of period",
+   "depends_on": "eval:doc.billing_backend == 'ALYF Simple Subscription'",
+   "fieldname": "simple_subscription_billing_time",
+   "fieldtype": "Select",
+   "label": "Billing Time",
+   "options": "at beginning of period\nafter end of period"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-17 01:49:30.484563",
+ "modified": "2026-09-17 02:04:31.738345",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Settings",

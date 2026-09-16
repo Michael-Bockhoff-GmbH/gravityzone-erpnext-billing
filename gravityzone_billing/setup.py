@@ -19,6 +19,10 @@ def after_install():
 	add_product_field_to_sync_history()
 	add_product_lines_field_to_company()
 	extend_license_metric_and_relax_plan()
+	add_billing_backend_fields_to_settings()
+	add_item_field_to_product_mapping()
+	add_item_field_to_company_product()
+	add_dynamic_billing_doc_link_to_company()
 
 
 def create_gravityzone_settings():
@@ -606,3 +610,206 @@ def extend_license_metric_and_relax_plan():
 
 	if changed:
 		doc.save(ignore_permissions=True)
+
+
+def add_billing_backend_fields_to_settings():
+	doc = frappe.get_doc("DocType", "GravityZone Settings")
+	existing = {f.fieldname for f in doc.fields}
+	changed = False
+
+	if "billing_backend_section" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "billing_backend_section",
+				"fieldtype": "Section Break",
+				"label": "Billing Backend",
+			},
+		)
+		changed = True
+
+	if "billing_backend" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "billing_backend",
+				"fieldtype": "Select",
+				"label": "Billing Backend",
+				"options": "ERPNext Subscription\nALYF Simple Subscription",
+				"default": "ERPNext Subscription",
+				"description": (
+					"Which recurring-billing doctype to drive. ERPNext Subscription is core "
+					"ERPNext's own doctype (uses Subscription Plan, above / on each Product "
+					"Mapping row). ALYF Simple Subscription "
+					"(github.com/alyf-de/simple_subscription) has no Plan concept — it bills "
+					"an Item directly — so fill in the Item field(s) instead when this is "
+					"selected. Switching backends for an already-onboarded customer creates a new "
+					"document under the new backend; the old one is left as-is for you to cancel."
+				),
+			},
+		)
+		changed = True
+
+	if "item" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "item",
+				"fieldtype": "Link",
+				"options": "Item",
+				"label": "Item (Simple Subscription)",
+				"depends_on": "eval:doc.billing_backend == 'ALYF Simple Subscription'",
+				"description": (
+					"Used instead of Subscription Plan for License Info / Monthly Usage billing "
+					"when Billing Backend is ALYF Simple Subscription."
+				),
+			},
+		)
+		changed = True
+
+	if "simple_subscription_frequency" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "simple_subscription_frequency",
+				"fieldtype": "Select",
+				"label": "Frequency",
+				"options": "Monthly\nQuarterly\nHalfyearly\nYearly\nBiennial\nTriennial",
+				"default": "Monthly",
+				"depends_on": "eval:doc.billing_backend == 'ALYF Simple Subscription'",
+				"description": "Used when creating a new Simple Subscription for a customer that doesn't have one yet.",
+			},
+		)
+		changed = True
+
+	if "simple_subscription_period_type" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "simple_subscription_period_type",
+				"fieldtype": "Select",
+				"label": "Billing Period Is Based On",
+				"options": "calendar months\nstart date",
+				"default": "calendar months",
+				"depends_on": "eval:doc.billing_backend == 'ALYF Simple Subscription'",
+			},
+		)
+		changed = True
+
+	if "simple_subscription_billing_time" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "simple_subscription_billing_time",
+				"fieldtype": "Select",
+				"label": "Billing Time",
+				"options": "at beginning of period\nafter end of period",
+				"default": "after end of period",
+				"depends_on": "eval:doc.billing_backend == 'ALYF Simple Subscription'",
+			},
+		)
+		changed = True
+
+	if changed:
+		doc.save(ignore_permissions=True)
+
+
+def add_item_field_to_product_mapping():
+	doc = frappe.get_doc("DocType", "GravityZone Product Mapping")
+	existing = {f.fieldname for f in doc.fields}
+	changed = False
+
+	if "item" not in existing:
+		doc.append(
+			"fields",
+			{
+				"fieldname": "item",
+				"fieldtype": "Link",
+				"options": "Item",
+				"label": "Item (Simple Subscription)",
+				"in_list_view": 1,
+				"description": (
+					"Used instead of Subscription Plan when GravityZone Settings' Billing Backend "
+					"is ALYF Simple Subscription."
+				),
+			},
+		)
+		changed = True
+
+	for field in doc.fields:
+		if field.fieldname == "subscription_plan" and field.reqd:
+			field.reqd = 0
+			field.description = "Required when Billing Backend is ERPNext Subscription."
+			changed = True
+
+	if changed:
+		doc.save(ignore_permissions=True)
+
+
+def add_item_field_to_company_product():
+	doc = frappe.get_doc("DocType", "GravityZone Company Product")
+	existing = {f.fieldname for f in doc.fields}
+	if "item" in existing:
+		return
+
+	idx = next(
+		(i for i, f in enumerate(doc.fields) if f.fieldname == "subscription_plan"), len(doc.fields) - 1
+	)
+	doc.append(
+		"fields",
+		{
+			"fieldname": "item",
+			"fieldtype": "Link",
+			"options": "Item",
+			"label": "Item (Simple Subscription)",
+			"read_only": 1,
+		},
+		idx + 1,
+	)
+	doc.save(ignore_permissions=True)
+
+
+def add_dynamic_billing_doc_link_to_company():
+	"""The Subscription field can point at either core ERPNext's Subscription
+	or ALYF's Simple Subscription, so it's a Dynamic Link keyed off a new
+	billing_doctype field rather than a fixed Link to one doctype.
+	"""
+	doc = frappe.get_doc("DocType", "GravityZone Company")
+	existing = {f.fieldname for f in doc.fields}
+	changed = False
+
+	if "billing_doctype" not in existing:
+		idx = next((i for i, f in enumerate(doc.fields) if f.fieldname == "subscription"), len(doc.fields))
+		doc.append(
+			"fields",
+			{
+				"fieldname": "billing_doctype",
+				"fieldtype": "Select",
+				"label": "Billing Doctype",
+				"options": "Subscription\nSimple Subscription",
+				"read_only": 1,
+				"description": "Which doctype the Subscription field below points to.",
+			},
+			idx,
+		)
+		changed = True
+
+	for field in doc.fields:
+		if field.fieldname == "subscription" and field.fieldtype != "Dynamic Link":
+			field.fieldtype = "Dynamic Link"
+			field.options = "billing_doctype"
+			changed = True
+
+	if changed:
+		doc.save(ignore_permissions=True)
+
+	# Backfill: any company synced before this migration was always billed
+	# through core ERPNext Subscription.
+	frappe.db.sql(
+		"""
+		UPDATE `tabGravityZone Company`
+		SET billing_doctype = 'Subscription'
+		WHERE subscription IS NOT NULL AND subscription != ''
+		  AND (billing_doctype IS NULL OR billing_doctype = '')
+		"""
+	)

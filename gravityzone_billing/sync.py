@@ -1,15 +1,21 @@
 """Pulls license counts from GravityZone and keeps each customer's
-Subscription quantity in sync so ERPNext's own scheduler bills the right
-amount on the next invoice run.
+billing document quantity in sync so the recurring-billing backend bills
+the right amount on the next invoice run.
 
 Two billing modes, chosen by GravityZone Settings' License Metric:
 
 - License Info / Monthly Usage: one flat per-seat line via Settings'
-  Subscription Plan (``_sync_company_flat``).
+  Subscription Plan / Item (``_sync_company_flat``).
 - Per-Product Monthly Usage: each GravityZone product (EDR, Patch
   Management, Endpoint Security, ...) bills as its own line, per the
   GravityZone Product Mapping list, each tracked independently on the
   company's Product Lines table (``_sync_company_per_product``).
+
+Two billing backends, chosen by GravityZone Settings' Billing Backend (see
+billing_backends.py): core ERPNext Subscription, or ALYF Simple
+Subscription. sync.py only ever talks to the backend through
+billing_backends.get_backend()/target_for() — it never assumes which one is
+active.
 
 In both modes, a change that looks anomalous (see GravityZone Settings'
 review thresholds) is held for manual approval instead of applied
@@ -20,8 +26,9 @@ History for audit purposes.
 from datetime import date
 
 import frappe
-from frappe.utils import now_datetime, today
+from frappe.utils import now_datetime
 
+from gravityzone_billing.billing_backends import get_backend, target_for
 from gravityzone_billing.gravityzone_client import GravityZoneClient
 
 
@@ -50,12 +57,16 @@ def sync_one_company(client: GravityZoneClient, settings, company_name: str):
 		_sync_company_flat(client, settings, company)
 
 
-# --- Flat mode: one plan, one quantity, for the whole company ---------------
+# --- Flat mode: one plan/item, one quantity, for the whole company ----------
 
 
 def _sync_company_flat(client: GravityZoneClient, settings, company):
+	backend = get_backend(settings)
+	target = target_for(settings, settings)
+
 	qty = _get_license_qty(client, settings, company)
-	baseline = _get_current_plan_qty(company, settings.subscription_plan)
+	doc = _existing_billing_doc(backend, company)
+	baseline = backend.get_qty(doc, target) if doc else None
 
 	if baseline is not None and _is_large_jump(baseline, qty, settings):
 		message = _flag_message(baseline, qty, settings)
@@ -68,13 +79,17 @@ def _sync_company_flat(client: GravityZoneClient, settings, company):
 		frappe.db.commit()
 		return
 
-	subscription, created = _get_or_create_subscription(settings, company, settings.subscription_plan, qty)
+	if doc is None:
+		doc = backend.find_existing_with_target(company.customer, target)
+	created = doc is None
 	if created:
+		doc = backend.create(company.customer, settings.default_company, settings, target, qty)
 		outcome, message = "Created", f"Created new subscription at {qty} licenses"
 	else:
-		outcome, message = _apply_qty(subscription, settings.subscription_plan, qty)
+		outcome, message = backend.set_qty(doc, target, qty)
 
-	company.subscription = subscription.name
+	company.billing_doctype = backend.doctype
+	company.subscription = doc.name
 	company.last_synced_qty = qty
 	company.last_synced_on = now_datetime()
 	company.last_sync_message = message
@@ -98,24 +113,16 @@ def _get_license_qty(client: GravityZoneClient, settings, company) -> int:
 	return max(qty, company.min_qty or 0)
 
 
-def _get_current_plan_qty(company, plan_name):
-	"""The quantity currently on the customer's Subscription for this plan, if any.
-
-	Read from the live Subscription (not our cached last_synced_qty) so a jump
-	is judged against reality even if someone edited the Subscription by hand.
+def _existing_billing_doc(backend, company):
+	"""The company's current billing document, if it exists and belongs to
+	the currently active backend. A company left over from a different
+	backend (e.g. after switching GravityZone Settings' Billing Backend) is
+	treated as having none yet — see billing_backends.py's module docstring.
 	"""
-	subscription = None
-	if company.subscription and frappe.db.exists("Subscription", company.subscription):
-		subscription = frappe.get_doc("Subscription", company.subscription)
-	else:
-		subscription = _find_subscription_with_plan(company.customer, plan_name)
-
-	if not subscription:
-		return None
-
-	for row in subscription.plans:
-		if row.plan == plan_name:
-			return row.qty
+	if company.subscription and company.billing_doctype == backend.doctype and frappe.db.exists(
+		backend.doctype, company.subscription
+	):
+		return frappe.get_doc(backend.doctype, company.subscription)
 	return None
 
 
@@ -123,10 +130,11 @@ def _get_current_plan_qty(company, plan_name):
 
 
 def _sync_company_per_product(client: GravityZoneClient, settings, company):
+	backend = get_backend(settings)
 	mappings = frappe.get_all(
 		"GravityZone Product Mapping",
 		filters={"enabled": 1},
-		fields=["name", "gz_usage_field", "subscription_plan", "label"],
+		fields=["name", "gz_usage_field", "subscription_plan", "item", "label"],
 	)
 	if not mappings:
 		company.last_synced_on = now_datetime()
@@ -138,20 +146,18 @@ def _sync_company_per_product(client: GravityZoneClient, settings, company):
 	target_month = date.today().strftime("%Y-%m")
 	usages = client.get_monthly_usage_per_product_type(company.gz_company_id, target_month)
 
-	subscription = None
-	if company.subscription and frappe.db.exists("Subscription", company.subscription):
-		subscription = frappe.get_doc("Subscription", company.subscription)
-	else:
-		subscription = _find_any_subscription_for_customer(company.customer)
+	doc = _existing_billing_doc(backend, company)
 
 	summary = []
 	any_flagged = False
-	# A brand-new Subscription can't be created with an empty plans table (ERPNext's
-	# own validation breaks on it), so accepted-but-not-yet-applied plans are batched
-	# here and the Subscription is created once, seeded with all of them together.
-	pending_plans = []
+	# A brand-new billing document can't always be created empty (ERPNext's
+	# Subscription validation breaks on an empty plans table), so
+	# accepted-but-not-yet-applied lines are batched here and the document is
+	# created once, seeded with all of them together.
+	pending_lines = []
 
 	for mapping in mappings:
+		target = target_for(settings, mapping)
 		qty = int(usages.get(mapping.gz_usage_field, 0) or 0)
 		row = _get_or_add_product_line(company, mapping)
 		baseline = row.last_synced_qty if row.last_synced_on else None
@@ -165,11 +171,11 @@ def _sync_company_per_product(client: GravityZoneClient, settings, company):
 			summary.append(f"{mapping.label}: needs review")
 			continue
 
-		if subscription is None:
-			pending_plans.append({"plan": mapping.subscription_plan, "qty": qty})
+		if doc is None:
+			pending_lines.append((target, qty))
 			outcome, message = "Created", f"Added plan at {qty} licenses"
 		else:
-			outcome, message = _apply_qty(subscription, mapping.subscription_plan, qty)
+			outcome, message = backend.set_qty(doc, target, qty)
 
 		row.last_synced_qty = qty
 		row.last_synced_on = now_datetime()
@@ -179,22 +185,15 @@ def _sync_company_per_product(client: GravityZoneClient, settings, company):
 		_append_history(company, baseline, qty, outcome, message, product=mapping.label)
 		summary.append(f"{mapping.label}: {outcome.lower()}")
 
-	if subscription is None and pending_plans:
-		subscription = frappe.get_doc(
-			{
-				"doctype": "Subscription",
-				"party_type": "Customer",
-				"party": company.customer,
-				"company": settings.default_company,
-				"start_date": today(),
-				"generate_invoice_at": "End of the current subscription period",
-				"plans": pending_plans,
-			}
-		)
-		subscription.insert(ignore_permissions=True)
+	if doc is None and pending_lines:
+		(first_target, first_qty), *rest = pending_lines
+		doc = backend.create(company.customer, settings.default_company, settings, first_target, first_qty)
+		for target, qty in rest:
+			backend.set_qty(doc, target, qty)
 
-	if subscription is not None:
-		company.subscription = subscription.name
+	if doc is not None:
+		company.billing_doctype = backend.doctype
+		company.subscription = doc.name
 
 	company.needs_review = 1 if any_flagged else 0
 	company.last_synced_qty = sum(row.last_synced_qty or 0 for row in company.get("product_lines") or [])
@@ -209,6 +208,7 @@ def _get_or_add_product_line(company, mapping):
 		if row.gz_usage_field == mapping.gz_usage_field:
 			row.label = mapping.label
 			row.subscription_plan = mapping.subscription_plan
+			row.item = mapping.item
 			return row
 	return company.append(
 		"product_lines",
@@ -216,43 +216,9 @@ def _get_or_add_product_line(company, mapping):
 			"gz_usage_field": mapping.gz_usage_field,
 			"label": mapping.label,
 			"subscription_plan": mapping.subscription_plan,
+			"item": mapping.item,
 		},
 	)
-
-
-def _ensure_subscription_shell(settings, company, initial_plan: str, initial_qty: int):
-	"""Find or create the one Subscription that holds all of this customer's
-	product lines (each line is a plan row on the same Subscription).
-
-	ERPNext's Subscription validation breaks on an empty plans table, so a
-	freshly created one is always seeded with the given plan/qty rather than
-	created empty.
-	"""
-	if company.subscription and frappe.db.exists("Subscription", company.subscription):
-		return frappe.get_doc("Subscription", company.subscription)
-
-	existing = _find_any_subscription_for_customer(company.customer)
-	if existing:
-		return existing
-
-	subscription = frappe.get_doc(
-		{
-			"doctype": "Subscription",
-			"party_type": "Customer",
-			"party": company.customer,
-			"company": settings.default_company,
-			"start_date": today(),
-			"generate_invoice_at": "End of the current subscription period",
-			"plans": [{"plan": initial_plan, "qty": initial_qty}],
-		}
-	)
-	subscription.insert(ignore_permissions=True)
-	return subscription
-
-
-def _find_any_subscription_for_customer(customer: str):
-	name = frappe.db.get_value("Subscription", {"party_type": "Customer", "party": customer}, "name")
-	return frappe.get_doc("Subscription", name) if name else None
 
 
 # --- Shared helpers -----------------------------------------------------------
@@ -268,7 +234,7 @@ def _is_large_jump(baseline: int, qty: int, settings) -> bool:
 
 
 def _flag_message(baseline: int, qty: int, settings) -> str:
-	delta = qty - baseline
+	delta = int(qty - baseline)
 	pct_change = (abs(delta) / baseline * 100) if baseline > 0 else 100.0
 	return (
 		f"Needs review: {baseline} -> {qty} licenses ({delta:+d}, {pct_change:.0f}%) exceeds the "
@@ -290,56 +256,6 @@ def _append_history(company, previous_qty, new_qty, outcome: str, message: str, 
 	)
 
 
-def _get_or_create_subscription(settings, company, plan_name, qty):
-	if company.subscription and frappe.db.exists("Subscription", company.subscription):
-		return frappe.get_doc("Subscription", company.subscription), False
-
-	existing = _find_subscription_with_plan(company.customer, plan_name)
-	if existing:
-		return existing, False
-
-	subscription = frappe.get_doc(
-		{
-			"doctype": "Subscription",
-			"party_type": "Customer",
-			"party": company.customer,
-			"company": settings.default_company,
-			"start_date": today(),
-			"generate_invoice_at": "End of the current subscription period",
-			"plans": [{"plan": plan_name, "qty": qty}],
-		}
-	)
-	subscription.insert(ignore_permissions=True)
-	return subscription, True
-
-
-def _find_subscription_with_plan(customer: str, plan_name: str):
-	for name in frappe.get_all(
-		"Subscription",
-		filters={"party_type": "Customer", "party": customer},
-		pluck="name",
-	):
-		subscription = frappe.get_doc("Subscription", name)
-		if any(p.plan == plan_name for p in subscription.plans):
-			return subscription
-	return None
-
-
-def _apply_qty(subscription, plan_name: str, qty: int) -> tuple[str, str]:
-	for plan_row in subscription.plans:
-		if plan_row.plan == plan_name:
-			if plan_row.qty == qty:
-				return "Unchanged", f"Unchanged ({qty} licenses)"
-			previous = plan_row.qty
-			plan_row.qty = qty
-			subscription.save(ignore_permissions=True)
-			return "Updated", f"Updated {previous} -> {qty} licenses"
-
-	subscription.append("plans", {"plan": plan_name, "qty": qty})
-	subscription.save(ignore_permissions=True)
-	return "Updated", f"Added plan at {qty} licenses"
-
-
 @frappe.whitelist()
 def sync_now():
 	frappe.only_for("System Manager")
@@ -354,6 +270,8 @@ def approve_pending_change(company_name: str):
 	"""
 	frappe.only_for("System Manager")
 	settings = frappe.get_single("GravityZone Settings")
+	backend = get_backend(settings)
+	target = target_for(settings, settings)
 	company = frappe.get_doc("GravityZone Company", company_name)
 
 	if not company.needs_review or company.pending_qty is None:
@@ -362,14 +280,17 @@ def approve_pending_change(company_name: str):
 	qty = company.pending_qty
 	baseline = company.last_synced_qty
 
-	subscription, created = _get_or_create_subscription(settings, company, settings.subscription_plan, qty)
+	doc = _existing_billing_doc(backend, company) or backend.find_existing_with_target(company.customer, target)
+	created = doc is None
 	if created:
+		doc = backend.create(company.customer, settings.default_company, settings, target, qty)
 		message = f"Created new subscription at {qty} licenses (manually approved)"
 	else:
-		_, message = _apply_qty(subscription, settings.subscription_plan, qty)
+		_, message = backend.set_qty(doc, target, qty)
 		message = f"Approved by {frappe.session.user}: {message}"
 
-	company.subscription = subscription.name
+	company.billing_doctype = backend.doctype
+	company.subscription = doc.name
 	company.last_synced_qty = qty
 	company.last_synced_on = now_datetime()
 	company.last_sync_message = message
@@ -385,10 +306,11 @@ def approve_pending_change(company_name: str):
 def approve_all_pending(company_name: str):
 	"""Apply every pending change on a company — the flat-mode pending
 	quantity if any, plus every flagged Product Line — after a human has
-	reviewed them. Works for both billing modes.
+	reviewed them. Works for both billing modes and both backends.
 	"""
 	frappe.only_for("System Manager")
 	settings = frappe.get_single("GravityZone Settings")
+	backend = get_backend(settings)
 	company = frappe.get_doc("GravityZone Company", company_name)
 	approved = 0
 
@@ -396,22 +318,22 @@ def approve_all_pending(company_name: str):
 		approve_pending_change(company_name=company_name)
 		return {"approved": 1}
 
-	subscription = None
-	if company.subscription and frappe.db.exists("Subscription", company.subscription):
-		subscription = frappe.get_doc("Subscription", company.subscription)
+	doc = _existing_billing_doc(backend, company)
 
 	for row in company.get("product_lines") or []:
 		if not row.needs_review or row.pending_qty is None:
 			continue
 		baseline = row.last_synced_qty
 		qty = row.pending_qty
+		target = target_for(settings, row)
 
-		if subscription is None:
-			subscription = _ensure_subscription_shell(settings, company, row.subscription_plan, qty)
-			company.subscription = subscription.name
+		if doc is None:
+			doc = backend.create(company.customer, settings.default_company, settings, target, qty)
+			company.billing_doctype = backend.doctype
+			company.subscription = doc.name
 			message = f"Approved by {frappe.session.user}: Created new subscription at {qty} licenses"
 		else:
-			_, message = _apply_qty(subscription, row.subscription_plan, qty)
+			_, message = backend.set_qty(doc, target, qty)
 			message = f"Approved by {frappe.session.user}: {message}"
 		row.last_synced_qty = qty
 		row.last_synced_on = now_datetime()
