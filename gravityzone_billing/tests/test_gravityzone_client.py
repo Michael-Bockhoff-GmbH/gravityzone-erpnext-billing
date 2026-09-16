@@ -4,15 +4,22 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from gravityzone_billing.gravityzone_client import GravityZoneClient, GravityZoneError
 
 BASE_URL = "https://cloud.gravityzone.bitdefender.com/api/v1.0/jsonrpc"
 
 
-def _mock_response(json_body):
+def _mock_response(json_body, status_code=200, headers=None):
 	response = MagicMock()
 	response.json.return_value = json_body
-	response.raise_for_status.return_value = None
+	response.status_code = status_code
+	response.headers = headers or {}
+	if status_code >= 400:
+		response.raise_for_status.side_effect = requests.HTTPError(f"{status_code} error")
+	else:
+		response.raise_for_status.return_value = None
 	return response
 
 
@@ -62,3 +69,42 @@ class TestGravityZoneClient(unittest.TestCase):
 		with patch.object(self.client._session, "post", return_value=response):
 			with self.assertRaises(GravityZoneError):
 				self.client.get_license_info("company-1")
+
+	def test_retries_on_429_then_succeeds(self):
+		throttled = _mock_response({}, status_code=429, headers={"Retry-After": "0"})
+		ok = _mock_response({"jsonrpc": "2.0", "id": 1, "result": {"usedLicenses": 3}})
+		with (
+			patch.object(self.client._session, "post", side_effect=[throttled, ok]) as post,
+			patch("gravityzone_billing.gravityzone_client.time.sleep") as sleep,
+		):
+			info = self.client.get_license_info("company-1")
+
+		self.assertEqual(info.used_licenses, 3)
+		self.assertEqual(post.call_count, 2)
+		sleep.assert_called()
+
+	def test_gives_up_after_max_retries_on_429(self):
+		throttled = _mock_response({}, status_code=429)
+		with (
+			patch.object(self.client._session, "post", return_value=throttled) as post,
+			patch("gravityzone_billing.gravityzone_client.time.sleep"),
+		):
+			with self.assertRaises(Exception):
+				self.client.get_license_info("company-1")
+
+		from gravityzone_billing.gravityzone_client import MAX_RETRIES
+
+		self.assertEqual(post.call_count, MAX_RETRIES)
+
+	def test_throttles_between_calls(self):
+		response = _mock_response({"jsonrpc": "2.0", "id": 1, "result": {"usedLicenses": 1}})
+		with (
+			patch.object(self.client._session, "post", return_value=response),
+			patch("gravityzone_billing.gravityzone_client.time.sleep") as sleep,
+		):
+			self.client.get_license_info("company-1")
+			self.client.get_license_info("company-1")
+
+		# second call should have measured the elapsed gap and (in the mocked,
+		# effectively-zero-elapsed-time case) asked to wait roughly one interval
+		sleep.assert_called()

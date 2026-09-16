@@ -8,6 +8,7 @@ from frappe.tests import IntegrationTestCase
 
 from gravityzone_billing import sync as sync_module
 from gravityzone_billing.gravityzone_client import LicenseInfo
+from gravityzone_billing.sync import approve_pending_change
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
 IGNORE_TEST_RECORD_DEPENDENCIES = []
@@ -24,7 +25,9 @@ def _mock_license_info(qty):
 class IntegrationTestGravityZoneCompany(IntegrationTestCase):
 	"""
 	Exercises the full GravityZone -> Subscription sync flow against a real
-	(test) site: create, quantity increase, and no-op idempotency.
+	(test) site: create, quantity increase, no-op idempotency, the minimum
+	seat floor, the large-jump review guard (including that a big account's
+	small relative change is NOT flagged), manual approval, and Sync History.
 	"""
 
 	@classmethod
@@ -73,6 +76,8 @@ class IntegrationTestGravityZoneCompany(IntegrationTestCase):
 		settings.subscription_plan = "GZ Test Plan"
 		settings.default_company = self.company
 		settings.sync_enabled = 1
+		settings.review_threshold_percent = 50
+		settings.review_threshold_min_seats = 5
 		settings.save(ignore_permissions=True)
 
 		if frappe.db.exists("GravityZone Company", "gz-co-1"):
@@ -136,3 +141,57 @@ class IntegrationTestGravityZoneCompany(IntegrationTestCase):
 
 		doc.reload()
 		self.assertEqual(doc.last_synced_qty, 3)
+
+	def test_large_jump_is_flagged_and_subscription_left_untouched(self):
+		with _mock_license_info(7):
+			sync_module.sync_licenses()
+		with _mock_license_info(50):
+			sync_module.sync_licenses()
+
+		doc = frappe.get_doc("GravityZone Company", "gz-co-1")
+		self.assertTrue(doc.needs_review)
+		self.assertEqual(doc.pending_qty, 50)
+		self.assertEqual(doc.last_synced_qty, 7)
+
+		subscription = frappe.get_doc("Subscription", doc.subscription)
+		self.assertEqual(subscription.plans[0].qty, 7)
+		self.assertEqual(doc.sync_history[-1].outcome, "Flagged for Review")
+
+	def test_large_company_small_relative_change_is_not_flagged(self):
+		with _mock_license_info(500):
+			sync_module.sync_licenses()
+		with _mock_license_info(506):
+			sync_module.sync_licenses()
+
+		doc = frappe.get_doc("GravityZone Company", "gz-co-1")
+		self.assertFalse(doc.needs_review)
+		self.assertEqual(doc.last_synced_qty, 506)
+
+	def test_approve_pending_change_applies_qty_and_clears_flag(self):
+		with _mock_license_info(7):
+			sync_module.sync_licenses()
+		with _mock_license_info(50):
+			sync_module.sync_licenses()
+
+		approve_pending_change(company_name="gz-co-1")
+
+		doc = frappe.get_doc("GravityZone Company", "gz-co-1")
+		self.assertFalse(doc.needs_review)
+		self.assertIsNone(doc.pending_qty)
+		self.assertEqual(doc.last_synced_qty, 50)
+
+		subscription = frappe.get_doc("Subscription", doc.subscription)
+		self.assertEqual(subscription.plans[0].qty, 50)
+		self.assertEqual(doc.sync_history[-1].outcome, "Approved")
+
+	def test_sync_history_records_every_outcome(self):
+		with _mock_license_info(5):
+			sync_module.sync_licenses()
+		with _mock_license_info(8):
+			sync_module.sync_licenses()
+		with _mock_license_info(8):
+			sync_module.sync_licenses()
+
+		doc = frappe.get_doc("GravityZone Company", "gz-co-1")
+		outcomes = [row.outcome for row in doc.sync_history]
+		self.assertEqual(outcomes, ["Created", "Updated", "Unchanged"])

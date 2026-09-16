@@ -18,7 +18,11 @@
   "last_synced_qty",
   "column_break_status",
   "last_synced_on",
-  "last_sync_message"
+  "last_sync_message",
+  "needs_review",
+  "pending_qty",
+  "sync_history_section",
+  "sync_history"
  ],
  "fields": [
   {
@@ -88,12 +92,39 @@
    "fieldtype": "Small Text",
    "label": "Last Sync Message",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "A synced license-count change exceeded the configured review threshold and was not applied automatically. See Pending License Count and Sync History below.",
+   "fieldname": "needs_review",
+   "fieldtype": "Check",
+   "label": "Needs Review"
+  },
+  {
+   "depends_on": "eval:doc.needs_review",
+   "description": "The synced value awaiting manual approval.",
+   "fieldname": "pending_qty",
+   "fieldtype": "Int",
+   "label": "Pending License Count",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sync_history_section",
+   "fieldtype": "Section Break",
+   "label": "Sync History"
+  },
+  {
+   "fieldname": "sync_history",
+   "fieldtype": "Table",
+   "label": "Sync History",
+   "options": "GravityZone Sync History"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-16 20:34:42.850239",
+ "modified": "2026-09-17 01:31:39.511954",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Company",

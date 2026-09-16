@@ -15,7 +15,11 @@
   "sync_enabled",
   "billing_section",
   "default_company",
-  "subscription_plan"
+  "subscription_plan",
+  "review_thresholds_section",
+  "review_threshold_percent",
+  "column_break_review_thresholds",
+  "review_threshold_min_seats"
  ],
  "fields": [
   {
@@ -75,13 +79,36 @@
    "label": "Subscription Plan",
    "options": "Subscription Plan",
    "reqd": 1
+  },
+  {
+   "fieldname": "review_thresholds_section",
+   "fieldtype": "Section Break",
+   "label": "Automatic Review Thresholds"
+  },
+  {
+   "default": "50",
+   "description": "A synced license-count change is held for manual review instead of applied automatically when it exceeds BOTH this percentage and the seat count below.",
+   "fieldname": "review_threshold_percent",
+   "fieldtype": "Percent",
+   "label": "Flag Changes Over (%)"
+  },
+  {
+   "fieldname": "column_break_review_thresholds",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "5",
+   "fieldname": "review_threshold_min_seats",
+   "fieldtype": "Int",
+   "label": "Flag Changes Over (seats)",
+   "non_negative": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-16 20:34:42.475698",
+ "modified": "2026-09-17 01:31:39.411336",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Settings",

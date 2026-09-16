@@ -35,10 +35,22 @@ bench --site your-site install-app gravityzone_billing
 
 ## Setup
 
-1. **Create a GravityZone API key.** In GravityZone Control Center, go to
-   *My Account → API keys* and create a key with access to the **Network**
-   and **Licensing** APIs (Partner tier — a non-partner "Cloud Solutions"
-   account cannot list companies).
+1. **Create a dedicated GravityZone API key.** In GravityZone Control
+   Center, go to *My Account → API keys* and create a key with access to
+   only the **Network** and **Licensing** APIs (Partner tier — a
+   non-partner "Cloud Solutions" account cannot list companies).
+
+   > **Security note:** GravityZone scopes API keys per whole service, with
+   > no read/write split within a service. The Licensing API toggle that
+   > exposes the read-only `getLicenseInfo`/`getMonthlyUsage` methods this
+   > app uses *also* exposes write methods like `setMonthlySubscription`
+   > that can change a company's licensing state — there is no way to get a
+   > Licensing key that is read-only at the GravityZone level. This app
+   > never calls those write methods, but a leaked key is only as safe as
+   > the services you enabled on it. Create a **separate key for this
+   > integration** with just Network + Licensing checked — leave Companies,
+   > Accounts, Policies, and Reports unchecked — so a leak here can't be
+   > used to create/delete/suspend companies or touch anything else.
 2. **Create the billing Item and Subscription Plan in ERPNext** (Selling /
    Accounts): one non-stock Item (e.g. "GravityZone License Seat") priced
    per seat, and one **Subscription Plan** using that Item.
@@ -50,13 +62,34 @@ bench --site your-site install-app gravityzone_billing
      *Monthly Usage* (actual monthly consumption; Bitdefender's recommended
      source for billing reconciliation).
    - **Default Company** and the **Subscription Plan** created above.
+   - **Automatic Review Thresholds** — a synced change is held for manual
+     review only when it exceeds **both** the percentage and seat-count
+     thresholds here (default: 50% and 5 seats), not either one alone. A
+     500-seat customer picking up 6 more devices is +6 seats but only
+     +1.2% — nowhere near 50% — so it's applied automatically like any
+     normal change; a 1-seat customer going to 2 seats is +100% but only
+     +1 seat — under the 5-seat floor — so that's automatic too. Only a
+     change large in *both* absolute and relative terms (e.g. 7 → 50
+     seats) gets held, which is what actually looks like an API glitch or
+     a data problem rather than organic growth.
 4. Click **Discover Companies** on GravityZone Settings to pull your
    GravityZone customer list into **GravityZone Company** records, then open
    each one and set its **ERPNext Customer** (and, optionally, a **Minimum
    Billable Seats** floor for minimum-commit contracts).
 5. Click **Sync Licenses Now** to run the first sync immediately, or wait for
    the daily scheduled job. Each **GravityZone Company** record shows its
-   last synced quantity and the linked **Subscription**.
+   last synced quantity, the linked **Subscription**, and a **Sync History**
+   table logging every sync outcome (created/updated/unchanged/flagged/
+   approved) for audit purposes.
+
+### When a change is held for review
+
+If a synced license count changes by more than the configured thresholds,
+the **GravityZone Company** record is marked **Needs Review** with the new
+count shown in **Pending License Count** — the Subscription itself is left
+untouched. Open the record and click **Approve Pending Change** to apply it,
+or investigate first if the jump looks wrong (e.g. a GravityZone API error
+rather than a real seat increase).
 
 ## Verifying against the real GravityZone API
 
@@ -80,15 +113,18 @@ cd apps/gravityzone_billing
 pre-commit install
 ```
 
-Run the dependency-free unit tests for the GravityZone JSON-RPC client:
+Run the dependency-free unit tests (GravityZone JSON-RPC client, including
+rate-limit backoff, and the large-jump review guard's threshold logic):
 
 ```bash
 bench --site your-site set-config allow_tests true
 bench --site your-site run-tests --module gravityzone_billing.tests.test_gravityzone_client
+bench --site your-site run-tests --module gravityzone_billing.tests.test_sync_guard
 ```
 
 The full sync flow (create Subscription → increase quantity → no-op when
-unchanged → minimum-seat floor) is covered by
+unchanged → minimum-seat floor → large-jump review flag → manual approval →
+Sync History logging) is covered by
 `gravityzone_billing/doctype/gravityzone_company/test_gravityzone_company.py`.
 Note: running `bench run-tests --app gravityzone_billing` also triggers
 Frappe's automatic loading of test fixtures for every linked doctype

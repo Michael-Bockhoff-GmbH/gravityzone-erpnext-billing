@@ -13,11 +13,15 @@ in Control Center and diff a real response against the shapes assumed here
 """
 
 import itertools
+import time
 
 import requests
 
 DEFAULT_TIMEOUT = 30
 MAX_PAGE_SIZE = 30  # documented GravityZone maximum for perPage
+MIN_CALL_INTERVAL = 0.12  # ~8.3 req/sec, a safety margin under GravityZone's documented 10 req/sec cap
+MAX_RETRIES = 5
+INITIAL_BACKOFF = 1.0
 
 
 class GravityZoneError(RuntimeError):
@@ -52,6 +56,13 @@ class GravityZoneClient:
 		self._session = session or requests.Session()
 		self._timeout = timeout
 		self._id_counter = itertools.count(1)
+		self._last_call_at = 0.0
+
+	def _throttle(self):
+		"""Keep our own call rate under GravityZone's documented per-key cap."""
+		wait = MIN_CALL_INTERVAL - (time.monotonic() - self._last_call_at)
+		if wait > 0:
+			time.sleep(wait)
 
 	def _call(self, service, method, params=None):
 		url = f"{self._base_url}/{service}/"
@@ -61,22 +72,34 @@ class GravityZoneClient:
 			"method": method,
 			"params": params or {},
 		}
-		response = self._session.post(
-			url,
-			json=payload,
-			auth=(self._api_key, ""),
-			headers={"Content-Type": "application/json"},
-			timeout=self._timeout,
-		)
-		response.raise_for_status()
-		body = response.json()
 
-		if body.get("error"):
-			error = body["error"]
-			raise GravityZoneError(
-				code=error.get("code"), message=error.get("message", "unknown error"), data=error.get("data")
+		backoff = INITIAL_BACKOFF
+		for attempt in range(1, MAX_RETRIES + 1):
+			self._throttle()
+			response = self._session.post(
+				url,
+				json=payload,
+				auth=(self._api_key, ""),
+				headers={"Content-Type": "application/json"},
+				timeout=self._timeout,
 			)
-		return body.get("result")
+			self._last_call_at = time.monotonic()
+
+			if response.status_code == 429 and attempt < MAX_RETRIES:
+				retry_after = response.headers.get("Retry-After")
+				time.sleep(float(retry_after) if retry_after else backoff)
+				backoff *= 2
+				continue
+
+			response.raise_for_status()
+			body = response.json()
+
+			if body.get("error"):
+				error = body["error"]
+				raise GravityZoneError(
+					code=error.get("code"), message=error.get("message", "unknown error"), data=error.get("data")
+				)
+			return body.get("result")
 
 	def _paginate(self, service, method, params):
 		page = 1
