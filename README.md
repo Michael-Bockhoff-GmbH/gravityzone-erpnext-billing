@@ -96,9 +96,11 @@ bench --site your-site install-app simple_subscription
    using that Item — Simple Subscription doesn't use Subscription Plans at
    all, it bills the Item directly.
 3. Open **GravityZone Settings** (single doctype) and fill in:
-   - **API Key** and **API Base URL** (defaults to the Cloud MSP endpoint;
-     see `.env`-style comments in the doctype for on-prem Control Center
-     installs).
+   - **API Key** and **API Base URL** — the *Access URL* shown next to the
+     API keys in Control Center, plus `/v1.0/jsonrpc`. For a cloud tenant
+     that is `https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc`;
+     on-prem Control Center installs use their own hostname. The prefilled
+     default may not match your tenant — check it.
    - **License Metric** — *License Info* (current allocated seats),
      *Monthly Usage* (actual monthly consumption; Bitdefender's recommended
      source for billing reconciliation), or *Per-Product Monthly Usage* (see
@@ -120,9 +122,23 @@ bench --site your-site install-app simple_subscription
      seats) gets held, which is what actually looks like an API glitch or
      a data problem rather than organic growth.
 4. Click **Discover Companies** on GravityZone Settings to pull your
-   GravityZone customer list into **GravityZone Company** records, then open
-   each one and set its **ERPNext Customer** (and, optionally, a **Minimum
-   Billable Seats** floor for minimum-commit contracts).
+   GravityZone customer list into **GravityZone Company** records. It walks
+   the whole company tree: sub-companies are recorded individually with a
+   **Parent Company** link (GravityZone has no recursive listing, so each
+   partner-type company is asked for its children via `getCompaniesList`'s
+   `parentId`). A company that has sub-companies is set to **Exclude from
+   Sync**, because its usage counters appear to be the sum of its
+   children's (seen on a live tenant, not documented) and syncing both would
+   bill every seat twice; un-tick it if you really want the parent billed.
+   Then give each company an **ERPNext Customer**: click **Create Missing
+   ERPNext Customers** (GravityZone Settings) or **Create ERPNext
+   Customers** (top of the GravityZone Company list) to create one for every
+   company that has none — named after the GravityZone company, linking an
+   existing Customer with exactly that name instead of duplicating it — or
+   use **Create ERPNext Customer** on a single record, or pick an existing
+   Customer yourself. New Customers only get a name and type "Company"
+   (group, territory, tax ID and address are left for you). Optionally set a
+   **Minimum Billable Seats** floor for minimum-commit contracts.
 5. Click **Sync Licenses Now** to run the first sync immediately, or wait for
    the daily scheduled job. Each **GravityZone Company** record shows its
    last synced quantity, the linked **Subscription**, and a **Sync History**
@@ -179,15 +195,38 @@ one flat per-seat line.
    "GZ EDR"), plus a **Subscription Plan** per Item if you're using the
    ERPNext Subscription backend (skip that for Simple Subscription, which
    bills Items directly).
-2. **Add a row to the GravityZone Product Mapping list** for each one:
+2. **Fill the GravityZone Product Mapping list.** Easiest: click **Discover
+   License Types** on GravityZone Settings. It reads every GravityZone
+   Company's protection model and this month's usage counters, shows what
+   each company holds in the **GravityZone Licenses** field on its record
+   (e.g. `Model: mspSecurePlus | Subscription: Monthly | Usage: Endpoint
+   Security 13, MSP Secure Plus 13`), and creates one *disabled* mapping row
+   for every counter that is in use. You then only pick the Plan/Item per
+   row and enable it. (Bitdefender's API has no "list of licenses" for
+   monthly-subscription companies — the model and the counters *are* the
+   licenses. Yearly license keys, `subscriptionType` 2, can additionally
+   return an `additionalLicenses` list via `getLicenseInfo`'s
+   `returnAllProducts` option; this app doesn't read that yet.) Or add the
+   rows by hand, one per product:
    - **GravityZone Usage Field** — the counter name from GravityZone's
-     `getMonthlyUsagePerProductType` response. Known counters (verify against
-     your tenant, see below): `endpointMonthlyUsage` (base Endpoint
-     Security), `edrMonthlyUsage`, `patchManagementMonthlyUsage`,
+     `getMonthlyUsagePerProductType` response. Counters seen on a live cloud
+     tenant: `endpointMonthlyUsage` (base Endpoint Security),
+     `edrMonthlyUsage`, `patchManagementMonthlyUsage`,
      `encryptionMonthlyUsage` (Full Disk Encryption), `emailSecurityMonthlyUsage`,
      `exchangeMonthlyUsage` (Exchange Protection), `atsMonthlyUsage`
      (Sandbox Analyzer / Advanced Threat Intelligence), `complianceMonthlyUsage`
-     (Compliance Manager).
+     (Compliance Manager), plus the MSP package tiers
+     `mspSecureEssentialsMonthlyUsage`, `mspSecureMonthlyUsage`,
+     `mspSecurePlusMonthlyUsage`, `mspSecureExtraMonthlyUsage` and
+     `aLaCarteMonthlyUsage`.
+
+     > **Don't bill the same seat twice.** The counters overlap: on the
+     > tenant this was checked against, `mspSecurePlusMonthlyUsage` equalled
+     > `endpointMonthlyUsage` (every endpoint is also counted under its
+     > package tier). If you sell by MSP package, map the package counters
+     > (`mspSecure…`, `aLaCarte…`) and **not** `endpointMonthlyUsage` as well,
+     > or each seat is invoiced once per counter. Compare a customer's
+     > counters in Control Center before choosing.
    - **Subscription Plan** or **Item** — whichever matches GravityZone
      Settings' Billing Backend.
    - **Enabled** — unchecked rows are skipped by the sync.
@@ -197,9 +236,10 @@ one flat per-seat line.
    document — one document per customer, multiple line items on it.
 
 **Migrating existing flat-plan customers:** map your existing per-seat
-Subscription Plan/Item to whatever counter corresponds to it (usually
-`endpointMonthlyUsage`) and existing customers keep billing on that same
-line under the new mode — any other product GravityZone reports for them
+Subscription Plan/Item to whatever counter corresponds to it (see the
+double-billing note above — `endpointMonthlyUsage` if you bill by plain
+seat, the matching package counter if you bill by MSP package) and
+existing customers keep billing on that same line under the new mode — any other product GravityZone reports for them
 just gets added as a new line on their existing document. Nothing needs to
 be manually migrated.
 
@@ -212,24 +252,28 @@ from syncing normally.
 ## Verifying against the real GravityZone API
 
 Bitdefender's Partner API documentation lives behind a JS-rendered partner
-portal, so `gravityzone_billing/gravityzone_client.py` was written from
-Bitdefender's published API guides and known method/parameter names rather
-than a captured live response. Before relying on this in production:
+portal, so `gravityzone_client.py` was first written from published guides
+and then corrected against a live cloud tenant. What has been **checked
+against a real API key** (cloud MSP, `cloudgz` host, read-only calls):
 
-1. Generate a real API key and enable verbose logging (or use `curl`/Postman)
-   to call `getCompaniesList` (Network service) and `getLicenseInfo` /
-   `getMonthlyUsage` / `getMonthlyUsagePerProductType` (Licensing service)
-   directly.
-2. Compare the response shape to what `gravityzone_client.py` expects
-   (`items`/`page`/`pagesCount` for lists; `usedLicenses`/`additionalLicenses`
-   for license info). Adjust the small amount of field-name handling in that
-   file if your tenant's response differs.
-3. If you plan to use Per-Product Monthly Usage billing, specifically check
-   `getMonthlyUsagePerProductType`'s response against the counter names
-   listed under [Per-product billing](#per-product-billing) — those names
-   were compiled from Bitdefender's documentation, not a captured response,
-   and are the part of this integration most likely to need adjusting for
-   your GravityZone version.
+- Host and auth: the **API Base URL** must be the Access URL Control Center
+  shows (`https://cloudgz.gravityzone.bitdefender.com/api`) plus
+  `/v1.0/jsonrpc`; a valid key sent to another host is answered with
+  `Invalid API key`.
+- `getCompaniesList` (`network`): takes **no parameters** and returns a plain
+  list of `{id, name}` — `page`/`perPage` are rejected.
+- `getLicenseInfo` (`licensing`): seat count is `usedSlots` (`totalSlots` is
+  `null` when the license has no fixed slot count) — there is no
+  `usedLicenses` field.
+- `getMonthlyUsage` / `getMonthlyUsagePerProductType`: `targetMonth` must be
+  `mm/yyyy`. The first returns a flat counter dict, the second
+  `{"usages": [{...all counters..., "productType": N}, ...]}`.
+
+Still **not** verified: which API-key checkbox gates `getCompaniesList`
+(Netzwerk/Network vs. Unternehmen/Companies — the call worked with both
+enabled), on-prem Control Center hosts, and tenants with several product
+types per company. To re-check on your own tenant, call the methods above
+directly (curl/Postman) with your key and compare against the client.
 
 ## Development
 

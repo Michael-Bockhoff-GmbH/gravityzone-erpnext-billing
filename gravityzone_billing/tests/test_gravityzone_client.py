@@ -27,27 +27,43 @@ class TestGravityZoneClient(unittest.TestCase):
 	def setUp(self):
 		self.client = GravityZoneClient(api_key="test-key", base_url=BASE_URL)
 
-	def test_get_companies_list_paginates(self):
-		page1 = _mock_response(
+	def test_get_companies_list_reads_plain_list_without_paging_params(self):
+		# Shape observed on a live cloud tenant: a bare list, and page/perPage are rejected.
+		response = _mock_response(
 			{
 				"jsonrpc": "2.0",
 				"id": 1,
-				"result": {"items": [{"id": "1", "name": "Acme"}], "page": 1, "pagesCount": 2},
+				"result": [{"id": "1", "name": "Acme"}, {"id": "2", "name": "Widgets Inc"}],
 			}
 		)
-		page2 = _mock_response(
-			{
-				"jsonrpc": "2.0",
-				"id": 2,
-				"result": {"items": [{"id": "2", "name": "Widgets Inc"}], "page": 2, "pagesCount": 2},
-			}
-		)
-		with patch.object(self.client._session, "post", side_effect=[page1, page2]) as post:
+		with patch.object(self.client._session, "post", return_value=response) as post:
 			companies = self.client.get_companies_list()
 
 		self.assertEqual([c.id for c in companies], ["1", "2"])
 		self.assertEqual([c.name for c in companies], ["Acme", "Widgets Inc"])
-		self.assertEqual(post.call_count, 2)
+		self.assertEqual(post.call_count, 1)
+		sent = post.call_args.kwargs["json"]
+		self.assertEqual(sent["method"], "getCompaniesList")
+		self.assertEqual(sent["params"], {})
+
+	def test_get_companies_list_sends_parentId_only_when_asked_for_children(self):
+		response = _mock_response(
+			{"jsonrpc": "2.0", "id": 1, "result": [{"id": "c1", "name": "Child"}]}
+		)
+		with patch.object(self.client._session, "post", return_value=response) as post:
+			children = self.client.get_companies_list(parent_id="parent-1")
+
+		self.assertEqual([c.id for c in children], ["c1"])
+		self.assertEqual(post.call_args.kwargs["json"]["params"], {"parentId": "parent-1"})
+
+	def test_get_companies_list_tolerates_items_wrapper(self):
+		response = _mock_response(
+			{"jsonrpc": "2.0", "id": 1, "result": {"items": [{"id": "1", "name": "Acme"}]}}
+		)
+		with patch.object(self.client._session, "post", return_value=response):
+			companies = self.client.get_companies_list()
+
+		self.assertEqual([c.id for c in companies], ["1"])
 
 	def test_get_license_info(self):
 		response = _mock_response(
@@ -69,6 +85,64 @@ class TestGravityZoneClient(unittest.TestCase):
 		with patch.object(self.client._session, "post", return_value=response):
 			with self.assertRaises(GravityZoneError):
 				self.client.get_license_info("company-1")
+
+	def test_get_license_info_reads_live_usedSlots_totalSlots(self):
+		# Field names observed on a live cloud tenant (totalSlots is None for slot-less licenses).
+		response = _mock_response(
+			{"jsonrpc": "2.0", "id": 1, "result": {"usedSlots": 12, "totalSlots": None, "subscriptionType": 2}}
+		)
+		with patch.object(self.client._session, "post", return_value=response):
+			info = self.client.get_license_info("company-1")
+
+		self.assertEqual(info.used_licenses, 12)
+		self.assertIsNone(info.allocated_licenses)
+
+	def test_get_license_info_raises_instead_of_reading_zero_when_field_missing(self):
+		response = _mock_response({"jsonrpc": "2.0", "id": 1, "result": {"somethingElse": 1}})
+		with patch.object(self.client._session, "post", return_value=response):
+			with self.assertRaises(GravityZoneError) as ctx:
+				self.client.get_license_info("company-1")
+
+		self.assertIn("usedSlots", str(ctx.exception))
+
+	def test_per_product_usage_sums_counters_across_product_types(self):
+		# Every usages entry carries the full counter set; a later entry's zeros
+		# must not overwrite an earlier entry's real counts.
+		response = _mock_response(
+			{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"result": {
+					"usages": [
+						{"productType": 0, "endpointMonthlyUsage": 10, "edrMonthlyUsage": 3},
+						{"productType": 5, "endpointMonthlyUsage": 0, "edrMonthlyUsage": 0, "phasrMonthlyUsage": 2},
+					]
+				},
+			}
+		)
+		with patch.object(self.client._session, "post", return_value=response):
+			usages = self.client.get_monthly_usage_per_product_type("company-1", "10/2026")
+
+		self.assertEqual(usages, {"endpointMonthlyUsage": 10, "edrMonthlyUsage": 3, "phasrMonthlyUsage": 2})
+
+	def test_http_401_surfaces_gravityzone_error_details(self):
+		response = _mock_response(
+			{
+				"id": 1,
+				"jsonrpc": "2.0",
+				"error": {
+					"code": -32000,
+					"message": "Server error",
+					"data": {"details": "Invalid API key. Please generate an API key in Control Center."},
+				},
+			},
+			status_code=401,
+		)
+		with patch.object(self.client._session, "post", return_value=response):
+			with self.assertRaises(GravityZoneError) as ctx:
+				self.client.get_license_info("company-1")
+
+		self.assertIn("Invalid API key", str(ctx.exception))
 
 	def test_retries_on_429_then_succeeds(self):
 		throttled = _mock_response({}, status_code=429, headers={"Retry-After": "0"})

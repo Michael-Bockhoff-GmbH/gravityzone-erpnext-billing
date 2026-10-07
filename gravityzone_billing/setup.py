@@ -23,6 +23,8 @@ def after_install():
 	add_item_field_to_product_mapping()
 	add_item_field_to_company_product()
 	add_dynamic_billing_doc_link_to_company()
+	add_licenses_summary_to_company()
+	add_sub_company_fields_to_company()
 
 
 def create_gravityzone_settings():
@@ -813,3 +815,64 @@ def add_dynamic_billing_doc_link_to_company():
 		  AND (billing_doctype IS NULL OR billing_doctype = '')
 		"""
 	)
+
+
+def add_licenses_summary_to_company():
+	doc = frappe.get_doc("DocType", "GravityZone Company")
+	if any(f.fieldname == "licenses_summary" for f in doc.fields):
+		return
+
+	# Right after last_sync_message so it sits in the Sync Status section.
+	idx = next(i for i, f in enumerate(doc.fields) if f.fieldname == "last_sync_message")
+	doc.append(
+		"fields",
+		{
+			"fieldname": "licenses_summary",
+			"fieldtype": "Small Text",
+			"label": "GravityZone Licenses",
+			"read_only": 1,
+			"description": (
+				"Protection model, subscription type and this month's usage counters, as read from "
+				"GravityZone by Discover License Types."
+			),
+		},
+		idx + 1,
+	)
+	doc.save(ignore_permissions=True)
+
+
+def add_sub_company_fields_to_company():
+	doc = frappe.get_doc("DocType", "GravityZone Company")
+	existing = {f.fieldname for f in doc.fields}
+	# Put them next to the mapping fields at the top of the form (after min_qty).
+	idx = next(i for i, f in enumerate(doc.fields) if f.fieldname == "min_qty")
+	new_fields = []
+
+	if "parent_company" not in existing:
+		new_fields.append(
+			{
+				"fieldname": "parent_company",
+				"fieldtype": "Link",
+				"options": "GravityZone Company",
+				"label": "Parent Company",
+				"read_only": 1,
+				"description": "Set by Discover Companies for a sub-company of another GravityZone company.",
+			}
+		)
+	if "exclude_from_sync" not in existing:
+		new_fields.append(
+			{
+				"fieldname": "exclude_from_sync",
+				"fieldtype": "Check",
+				"label": "Exclude from Sync",
+				"description": (
+					"Set automatically for a company that has sub-companies: its usage counters appear "
+					"to be the sum of its sub-companies', so syncing both would bill every seat twice."
+				),
+			}
+		)
+
+	for offset, field in enumerate(new_fields, start=1):
+		doc.append("fields", field, idx + offset)
+	if new_fields:
+		doc.save(ignore_permissions=True)

@@ -3,6 +3,17 @@
 
 frappe.ui.form.on("GravityZone Company", {
 	refresh(frm) {
+		if (!frm.is_new() && !frm.doc.customer) {
+			frm.add_custom_button(__("Create ERPNext Customer"), () => {
+				frappe.call({
+					method: "gravityzone_billing.sync.create_erpnext_customers",
+					args: { company_names: [frm.doc.name] },
+					freeze: true,
+					freeze_message: __("Creating Customer..."),
+				}).then(() => frm.reload_doc());
+			}).addClass("btn-primary");
+		}
+
 		if (!frm.doc.needs_review) {
 			return;
 		}

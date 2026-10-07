@@ -13,6 +13,8 @@
   "column_break_mapping",
   "customer",
   "min_qty",
+  "parent_company",
+  "exclude_from_sync",
   "status_section",
   "billing_doctype",
   "subscription",
@@ -20,6 +22,7 @@
   "column_break_status",
   "last_synced_on",
   "last_sync_message",
+  "licenses_summary",
   "needs_review",
   "pending_qty",
   "sync_history_section",
@@ -143,12 +146,34 @@
    "label": "Billing Doctype",
    "options": "Subscription\nSimple Subscription",
    "read_only": 1
+  },
+  {
+   "description": "Protection model, subscription type and this month's usage counters, as read from GravityZone by Discover License Types.",
+   "fieldname": "licenses_summary",
+   "fieldtype": "Small Text",
+   "label": "GravityZone Licenses",
+   "read_only": 1
+  },
+  {
+   "description": "Set by Discover Companies for a sub-company of another GravityZone company.",
+   "fieldname": "parent_company",
+   "fieldtype": "Link",
+   "label": "Parent Company",
+   "options": "GravityZone Company",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set automatically for a company that has sub-companies: its usage counters appear to be the sum of its sub-companies', so syncing both would bill every seat twice.",
+   "fieldname": "exclude_from_sync",
+   "fieldtype": "Check",
+   "label": "Exclude from Sync"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-17 02:04:32.338235",
+ "modified": "2026-10-07 21:29:42.867295",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Company",

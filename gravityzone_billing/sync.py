@@ -23,38 +23,93 @@ automatically, and every sync outcome is appended to the company's Sync
 History for audit purposes.
 """
 
+import json
+import re
 from datetime import date
 
 import frappe
 from frappe.utils import now_datetime
 
-from gravityzone_billing.billing_backends import get_backend, target_for
-from gravityzone_billing.gravityzone_client import GravityZoneClient
+from gravityzone_billing.billing_backends import SIMPLE_SUBSCRIPTION, get_backend, target_for
+from gravityzone_billing.gravityzone_client import GravityZoneClient, GravityZoneError
 
 
-def sync_licenses():
+def sync_licenses() -> dict:
+	"""Sync every GravityZone Company. Returns ``{"synced", "skipped", "failed"}``
+	counts so callers (the Sync Licenses Now button) can say what happened.
+	"""
+	result = {"synced": 0, "skipped": 0, "failed": 0}
 	settings = frappe.get_single("GravityZone Settings")
 	if not settings.sync_enabled:
-		return
+		return result
 
+	_check_settings(settings)
 	client = GravityZoneClient(api_key=settings.get_password("api_key"), base_url=settings.base_url)
 
 	for row in frappe.get_all("GravityZone Company", pluck="name"):
 		try:
-			sync_one_company(client, settings, row)
+			result[sync_one_company(client, settings, row)] += 1
 		except Exception:
+			result["failed"] += 1
 			frappe.log_error(
 				title=f"GravityZone sync failed: {row}",
 				message=frappe.get_traceback(),
 			)
+	return result
 
 
-def sync_one_company(client: GravityZoneClient, settings, company_name: str):
+def _check_settings(settings):
+	"""Fail fast with a plain message instead of letting every company hit a
+	cryptic ERPNext "Value missing for Subscription Plan" error.
+	"""
+	problems = []
+	if not settings.default_company:
+		problems.append("Default Company is not set")
+
+	if settings.license_metric == "Per-Product Monthly Usage":
+		mappings = frappe.get_all(
+			"GravityZone Product Mapping", filters={"enabled": 1}, fields=["name", "subscription_plan", "item"]
+		)
+		if not mappings:
+			problems.append("no enabled GravityZone Product Mapping exists")
+		unassigned = [m.name for m in mappings if not target_for(settings, m)]
+		if unassigned:
+			field = "Item" if settings.billing_backend == SIMPLE_SUBSCRIPTION else "Subscription Plan"
+			problems.append(f"enabled Product Mapping without a {field}: {', '.join(unassigned)}")
+	elif not target_for(settings, settings):
+		field = "Item" if settings.billing_backend == SIMPLE_SUBSCRIPTION else "Subscription Plan"
+		problems.append(f"{field} is not set")
+
+	if problems:
+		frappe.throw("GravityZone sync is not configured: " + "; ".join(problems) + ".")
+
+
+def sync_one_company(client: GravityZoneClient, settings, company_name: str) -> str:
+	"""Returns ``"synced"``, or ``"skipped"`` for a company with no ERPNext Customer yet."""
 	company = frappe.get_doc("GravityZone Company", company_name)
+
+	skip_reason = None
+	if company.exclude_from_sync:
+		skip_reason = "Skipped: excluded from sync (its sub-companies are billed individually)"
+	elif not company.customer:
+		skip_reason = "Skipped: no ERPNext Customer assigned yet"
+
+	if skip_reason:
+		# set_value, not save(): a record from Discover Companies has no Customer yet and
+		# would fail the mandatory-field check.
+		frappe.db.set_value(
+			"GravityZone Company",
+			company_name,
+			{"last_synced_on": now_datetime(), "last_sync_message": skip_reason},
+		)
+		frappe.db.commit()
+		return "skipped"
+
 	if settings.license_metric == "Per-Product Monthly Usage":
 		_sync_company_per_product(client, settings, company)
 	else:
 		_sync_company_flat(client, settings, company)
+	return "synced"
 
 
 # --- Flat mode: one plan/item, one quantity, for the whole company ----------
@@ -103,9 +158,13 @@ def _sync_company_flat(client: GravityZoneClient, settings, company):
 
 def _get_license_qty(client: GravityZoneClient, settings, company) -> int:
 	if settings.license_metric == "Monthly Usage":
-		target_month = date.today().strftime("%Y-%m")
-		usage = client.get_monthly_usage(company.gz_company_id, target_month)
-		qty = int(usage.get("endpoints", usage.get("usedLicenses", 0)))
+		usage = client.get_monthly_usage(company.gz_company_id, date.today().strftime("%m/%Y"))
+		qty = usage.get("endpointMonthlyUsage")
+		if qty is None:
+			raise GravityZoneError(
+				None, f"getMonthlyUsage returned no endpointMonthlyUsage; got: {sorted(usage)}"
+			)
+		qty = int(qty)
 	else:
 		info = client.get_license_info(company.gz_company_id)
 		qty = info.used_licenses
@@ -143,8 +202,7 @@ def _sync_company_per_product(client: GravityZoneClient, settings, company):
 		frappe.db.commit()
 		return
 
-	target_month = date.today().strftime("%Y-%m")
-	usages = client.get_monthly_usage_per_product_type(company.gz_company_id, target_month)
+	usages = client.get_monthly_usage_per_product_type(company.gz_company_id, date.today().strftime("%m/%Y"))
 
 	doc = _existing_billing_doc(backend, company)
 
@@ -259,8 +317,7 @@ def _append_history(company, previous_qty, new_qty, outcome: str, message: str, 
 @frappe.whitelist()
 def sync_now():
 	frappe.only_for("System Manager")
-	sync_licenses()
-	return {"ok": True}
+	return sync_licenses()
 
 
 @frappe.whitelist()
@@ -351,30 +408,229 @@ def approve_all_pending(company_name: str):
 	return {"approved": approved}
 
 
+def _collect_company_tree(client) -> list:
+	"""Every company under the API key's company, as ``(company, parent_id)`` pairs,
+	parents before their children. ``parent_id`` is None for the top level.
+
+	GravityZone has no recursive listing, so each company is asked for its
+	children. A customer-type company (``type`` 1) can't have any and answers
+	error -32602 for ``parentId`` — that means "leaf", not a failure; any other
+	error is real and propagates.
+	"""
+	found = []
+	seen = set()
+	queue = [(company, None) for company in client.get_companies_list()]
+	while queue:
+		company, parent_id = queue.pop(0)
+		if company.id in seen:
+			continue
+		seen.add(company.id)
+		found.append((company, parent_id))
+		try:
+			children = client.get_companies_list(parent_id=company.id)
+		except GravityZoneError as error:
+			if error.code != -32602:
+				raise
+			children = []
+		queue.extend((child, company.id) for child in children)
+	return found
+
+
 @frappe.whitelist()
 def discover_companies():
-	"""Pull the MSP company list from GravityZone and create/refresh
-	GravityZone Company records (without a Customer assigned yet, for the
-	user to fill in).
+	"""Pull the whole GravityZone company tree and create/refresh GravityZone
+	Company records (without a Customer assigned yet, for the user to fill in).
+
+	Sub-companies are recorded individually with a link to their parent. A
+	parent that gains its first sub-company here is marked Exclude from Sync,
+	because its usage counters appear to be the sum of its children's and
+	syncing both would bill every seat twice. That mark is only set at that
+	moment, so un-ticking it later sticks.
 	"""
 	frappe.only_for("System Manager")
 	settings = frappe.get_single("GravityZone Settings")
 	client = GravityZoneClient(api_key=settings.get_password("api_key"), base_url=settings.base_url)
 
-	created, updated = 0, 0
-	for company in client.get_companies_list():
+	created = updated = sub_companies = excluded_parents = 0
+	for company, parent_id in _collect_company_tree(client):
+		if parent_id:
+			sub_companies += 1
+
 		if frappe.db.exists("GravityZone Company", company.id):
-			frappe.db.set_value("GravityZone Company", company.id, "gz_company_name", company.name)
+			values = {"gz_company_name": company.name}
+			if parent_id:
+				values["parent_company"] = parent_id
+			frappe.db.set_value("GravityZone Company", company.id, values)
 			updated += 1
-		else:
-			frappe.get_doc(
-				{
-					"doctype": "GravityZone Company",
-					"gz_company_id": company.id,
-					"gz_company_name": company.name,
-				}
-			).insert(ignore_permissions=True, ignore_mandatory=True)
-			created += 1
+			continue
+
+		first_child = bool(parent_id) and not frappe.db.exists("GravityZone Company", {"parent_company": parent_id})
+		frappe.get_doc(
+			{
+				"doctype": "GravityZone Company",
+				"gz_company_id": company.id,
+				"gz_company_name": company.name,
+				"parent_company": parent_id,
+			}
+		).insert(ignore_permissions=True, ignore_mandatory=True)
+		created += 1
+
+		if first_child:
+			frappe.db.set_value("GravityZone Company", parent_id, "exclude_from_sync", 1)
+			excluded_parents += 1
 
 	frappe.db.commit()
-	return {"created": created, "updated": updated}
+	return {
+		"created": created,
+		"updated": updated,
+		"sub_companies": sub_companies,
+		"excluded_parents": excluded_parents,
+	}
+
+
+# Meanings per Bitdefender's getLicenseInfo documentation.
+SUBSCRIPTION_TYPES = {
+	1: "Trial",
+	2: "Licensed",
+	3: "Monthly",
+	4: "Monthly license trial",
+	5: "Monthly subscription trial",
+	6: "FRAT",
+}
+PRODUCT_TYPES = {0: "Endpoint Security", 3: "EDR", 5: "PHASR"}
+_ACRONYMS = {"msp", "edr", "ats", "ai", "spm", "easm", "sve", "vdi", "vs", "xdr", "mdr", "phasr"}
+
+
+def _counter_label(field: str) -> str:
+	"""Readable name for a GravityZone usage counter, e.g. ``mspSecurePlusMonthlyUsage``
+	-> ``MSP Secure Plus``.
+	"""
+	if field == "endpointMonthlyUsage":
+		return "Endpoint Security"
+	name = re.sub(r"(MonthlyUsage|Usage)$", "", field)
+	words = re.findall(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])", name)
+	return " ".join(w.upper() if w.lower() in _ACRONYMS else w[:1].upper() + w[1:] for w in words)
+
+
+def _license_summary(info: dict, usage: dict) -> str:
+	"""One line describing what a company holds: protection model, subscription
+	type, any additional product types, and this month's non-zero counters.
+	"""
+	subscription = SUBSCRIPTION_TYPES.get(info.get("subscriptionType"), info.get("subscriptionType"))
+	parts = [f"Model: {info.get('assignedProtectionModel') or 'n/a'}", f"Subscription: {subscription}"]
+
+	extra = [PRODUCT_TYPES.get(t, str(t)) for t in info.get("additionalProductTypes") or []]
+	if extra:
+		parts.append("Additional products: " + ", ".join(extra))
+
+	counters = ", ".join(f"{_counter_label(f)} {v}" for f, v in sorted(usage.items()))
+	if counters:
+		parts.append("Usage: " + counters)
+	return " | ".join(parts)
+
+
+@frappe.whitelist()
+def discover_license_types():
+	"""Read every GravityZone Company's license model and this month's usage
+	counters, write a readable summary onto each company, and create a
+	(disabled, still unassigned) GravityZone Product Mapping row for every
+	counter that is non-zero for at least one company — so each license type
+	only needs an ERPNext Item / Subscription Plan picked and enabling.
+	"""
+	frappe.only_for("System Manager")
+	settings = frappe.get_single("GravityZone Settings")
+	companies = frappe.get_all("GravityZone Company", fields=["name", "gz_company_id"])
+	if not companies:
+		frappe.throw("There are no GravityZone Company records yet — run Discover Companies first.")
+
+	client = GravityZoneClient(api_key=settings.get_password("api_key"), base_url=settings.base_url)
+	month = date.today().strftime("%m/%Y")
+
+	companies_per_counter = {}
+	for company in companies:
+		info = client.get_license_info(company.gz_company_id).raw
+		usage = {
+			field: value
+			for field, value in client.get_monthly_usage_per_product_type(company.gz_company_id, month).items()
+			if value
+		}
+		for field in usage:
+			companies_per_counter[field] = companies_per_counter.get(field, 0) + 1
+		frappe.db.set_value("GravityZone Company", company.name, "licenses_summary", _license_summary(info, usage))
+
+	created = 0
+	for field in sorted(companies_per_counter):
+		if frappe.db.exists("GravityZone Product Mapping", field):
+			continue
+		frappe.get_doc(
+			{
+				"doctype": "GravityZone Product Mapping",
+				"gz_usage_field": field,
+				"label": _counter_label(field),
+				"enabled": 0,
+			}
+		).insert(ignore_permissions=True, ignore_mandatory=True)
+		created += 1
+
+	frappe.db.commit()
+	return {
+		"companies": len(companies),
+		"types": len(companies_per_counter),
+		"created": created,
+		"counters": companies_per_counter,
+	}
+
+
+@frappe.whitelist()
+def create_missing_erpnext_customers():
+	"""create_erpnext_customers for every GravityZone Company that has no
+	Customer yet and isn't excluded from sync.
+	"""
+	frappe.only_for("System Manager")
+	names = frappe.get_all(
+		"GravityZone Company",
+		filters={"customer": ["is", "not set"], "exclude_from_sync": 0},
+		pluck="name",
+	)
+	return create_erpnext_customers(json.dumps(names))
+
+
+@frappe.whitelist()
+def create_erpnext_customers(company_names):
+	"""Give each GravityZone Company that has no ERPNext Customer yet one,
+	named after the GravityZone company. A Customer with exactly that name is
+	linked instead of creating a duplicate. Companies that already have a
+	Customer are left alone.
+
+	The new Customer gets only a name and type "Company" — Customer Group,
+	Territory, tax IDs and addresses are not known from GravityZone and are
+	left for you to fill in. All-or-nothing: if one fails, none are saved.
+	"""
+	frappe.only_for("System Manager")
+	created = linked = skipped = 0
+
+	for name in frappe.parse_json(company_names):
+		company = frappe.get_doc("GravityZone Company", name)
+		if company.customer:
+			skipped += 1
+			continue
+
+		customer_name = (company.gz_company_name or company.gz_company_id).strip()
+		customer = frappe.db.get_value("Customer", {"customer_name": customer_name}, "name")
+		if customer:
+			linked += 1
+		else:
+			customer = (
+				frappe.get_doc(
+					{"doctype": "Customer", "customer_name": customer_name, "customer_type": "Company"}
+				)
+				.insert(ignore_permissions=True)
+				.name
+			)
+			created += 1
+
+		company.customer = customer
+		company.save(ignore_permissions=True)
+
+	frappe.db.commit()
+	return {"created": created, "linked": linked, "skipped": skipped}

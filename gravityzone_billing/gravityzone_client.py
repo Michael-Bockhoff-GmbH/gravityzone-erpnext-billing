@@ -18,8 +18,7 @@ import time
 import requests
 
 DEFAULT_TIMEOUT = 30
-MAX_PAGE_SIZE = 30  # documented GravityZone maximum for perPage
-MIN_CALL_INTERVAL = 0.12  # ~8.3 req/sec, a safety margin under GravityZone's documented 10 req/sec cap
+MIN_CALL_INTERVAL = 0.25  # 4 req/sec: under the 5 req/sec per-key limit Bitdefender documents for the Licensing methods
 MAX_RETRIES = 5
 INITIAL_BACKOFF = 1.0
 
@@ -91,58 +90,80 @@ class GravityZoneClient:
 				backoff *= 2
 				continue
 
-			response.raise_for_status()
-			body = response.json()
+			# GravityZone explains failures in a JSON-RPC error body even on HTTP 4xx
+			# (e.g. 401 "Invalid API key"), so surface that before raise_for_status
+			# replaces it with a bare status line.
+			try:
+				body = response.json()
+			except ValueError:
+				body = None
 
-			if body.get("error"):
+			if isinstance(body, dict) and body.get("error"):
 				error = body["error"]
+				message = error.get("message", "unknown error")
+				details = (error.get("data") or {}).get("details")
 				raise GravityZoneError(
-					code=error.get("code"), message=error.get("message", "unknown error"), data=error.get("data")
+					code=error.get("code"),
+					message=f"{message}: {details}" if details else message,
+					data=error.get("data"),
 				)
-			return body.get("result")
 
-	def _paginate(self, service, method, params):
-		page = 1
-		while True:
-			result = self._call(service, method, {**params, "page": page, "perPage": MAX_PAGE_SIZE})
-			items = result.get("items", []) if isinstance(result, dict) else []
-			yield from items
+			response.raise_for_status()
+			return (body or {}).get("result")
 
-			pages_count = result.get("pagesCount", page) if isinstance(result, dict) else page
-			if page >= pages_count:
-				break
-			page += 1
+	def get_companies_list(self, parent_id=None):
+		"""List the companies directly under ``parent_id`` (default: the API key's own
+		company) — one level only, there is no recursive option.
 
-	def get_companies_list(self):
-		"""List all MSP customer companies visible to this partner API key.
-
-		Maps to the Network service ``getCompaniesList`` method, which is only
-		populated for Partner-tier accounts (returns empty for direct/"Cloud
-		Solutions" accounts).
+		Maps to the Network service ``getCompaniesList`` method. Verified against
+		a live cloud tenant: ``page``/``perPage`` are rejected with "Invalid
+		params"; the result is a plain, unpaginated list of ``{"id", "name"}``
+		objects. Passing the id of a partner-type company (``type`` 0) returns its
+		sub-companies; for a customer-type company (``type`` 1) GravityZone
+		answers error -32602 "Invalid value for 'parentId'", which callers walking
+		the tree treat as "no children". A ``{"items": [...]}`` wrapper is still
+		tolerated in case other GravityZone versions differ.
 		"""
-		companies = []
-		for item in self._paginate("network", "getCompaniesList", {}):
-			companies.append(Company(id=str(item.get("id")), name=item.get("name", ""), raw=item))
-		return companies
+		params = {"parentId": parent_id} if parent_id else {}
+		result = self._call("network", "getCompaniesList", params)
+		items = result.get("items", []) if isinstance(result, dict) else (result or [])
+		return [Company(id=str(item.get("id")), name=item.get("name", ""), raw=item) for item in items]
 
 	def get_license_info(self, company_id):
-		"""Current seat allocation/usage for a company (Licensing service)."""
-		result = self._call("licensing", "getLicenseInfo", {"companyId": company_id})
-		used = int(result.get("usedLicenses", result.get("used", 0)))
-		allocated = result.get("additionalLicenses", result.get("allocatedLicenses"))
+		"""Current seat usage for a company (Licensing service).
+
+		Verified against a live cloud tenant: the seat counts are ``usedSlots``
+		and ``totalSlots`` (None when the license has no fixed slot count). The
+		older ``usedLicenses``/``additionalLicenses`` names are still accepted.
+		A response with none of the used-count fields raises instead of
+		reading as 0, which would silently bill everyone for nothing.
+		"""
+		result = self._call("licensing", "getLicenseInfo", {"companyId": company_id}) or {}
+		used = next((result[k] for k in ("usedSlots", "usedLicenses", "used") if result.get(k) is not None), None)
+		if used is None:
+			raise GravityZoneError(
+				None,
+				f"getLicenseInfo returned no used-seat field (expected usedSlots); got: {sorted(result)}",
+			)
+		allocated = next(
+			(result[k] for k in ("totalSlots", "additionalLicenses", "allocatedLicenses") if result.get(k) is not None),
+			None,
+		)
 		return LicenseInfo(
 			company_id=company_id,
-			used_licenses=used,
+			used_licenses=int(used),
 			allocated_licenses=int(allocated) if allocated is not None else None,
 			raw=result,
 		)
 
 	def get_monthly_usage(self, company_id, target_month):
-		"""Actual monthly seat/mailbox consumption for a company.
+		"""Actual monthly consumption for a company.
 
-		``target_month`` is a ``YYYY-MM`` string. This is Bitdefender's
-		recommended source of truth for MSP billing reconciliation, as opposed
-		to the point-in-time allocation returned by ``getLicenseInfo``.
+		``target_month`` must be ``mm/yyyy`` (e.g. ``"10/2026"``) — GravityZone
+		rejects any other format with "Invalid params". Returns the flat dict of
+		counters (``endpointMonthlyUsage``, ``edrMonthlyUsage``, ...). This is
+		Bitdefender's recommended source of truth for MSP billing
+		reconciliation, as opposed to the point-in-time ``getLicenseInfo``.
 		"""
 		return self._call("licensing", "getMonthlyUsage", {"companyId": company_id, "targetMonth": target_month})
 
@@ -153,10 +174,15 @@ class GravityZoneClient:
 		``get_monthly_usage`` which only covers the default Endpoint Security
 		product.
 
-		Returns a flat ``{usage_field: count}`` dict merged across whatever
-		shape the API responds with (a top-level dict of counters, or a
-		``usages`` list of per-product-type dicts — documented examples suggest
-		the latter, but this normalizes either way).
+		Same ``mm/yyyy`` ``target_month`` format as ``get_monthly_usage``.
+
+		Verified against a live cloud tenant: the response is
+		``{"usages": [{...counters..., "productType": N}, ...]}`` with one entry
+		per product type, and *every* entry carries the full set of counters.
+		Returns a flat ``{usage_field: count}`` dict with each counter summed
+		across entries (merging with ``dict.update`` would let a later entry's
+		zeros overwrite an earlier entry's real counts). A top-level flat dict
+		of counters is passed through unchanged.
 		"""
 		result = (
 			self._call(
@@ -167,9 +193,13 @@ class GravityZoneClient:
 			or {}
 		)
 		if isinstance(result, dict) and isinstance(result.get("usages"), list):
-			merged = {}
+			totals = {}
 			for usage in result["usages"]:
-				if isinstance(usage, dict):
-					merged.update(usage)
-			return merged
+				if not isinstance(usage, dict):
+					continue
+				for field, value in usage.items():
+					if field == "productType" or isinstance(value, bool) or not isinstance(value, (int, float)):
+						continue
+					totals[field] = totals.get(field, 0) + value
+			return totals
 		return result if isinstance(result, dict) else {}
