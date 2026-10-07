@@ -25,6 +25,8 @@ def after_install():
 	add_dynamic_billing_doc_link_to_company()
 	add_licenses_summary_to_company()
 	add_sub_company_fields_to_company()
+	refresh_settings_defaults_and_help()
+	add_companies_using_to_product_mapping()
 
 
 def create_gravityzone_settings():
@@ -50,15 +52,16 @@ def create_gravityzone_settings():
 					"fieldtype": "Password",
 					"label": "API Key",
 					"description": (
-						"Control Center &gt; My Account &gt; API keys. The key needs access to the "
-						"Network and Licensing APIs (Partner tier) to list companies and read license counts."
+						"Control Center &gt; My Account &gt; API keys. The key needs the Network and Licensing "
+						"APIs (Partner tier) to list companies and read license counts, plus Companies only "
+						"if new ERPNext Customers should get address/contact data from GravityZone."
 					),
 				},
 				{
 					"fieldname": "base_url",
 					"fieldtype": "Data",
 					"label": "API Base URL",
-					"default": "https://cloud.gravityzone.bitdefender.com/api/v1.0/jsonrpc",
+					"default": "https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc",
 					"reqd": 1,
 				},
 				{"fieldname": "column_break_connection", "fieldtype": "Column Break"},
@@ -843,13 +846,21 @@ def add_licenses_summary_to_company():
 
 def add_sub_company_fields_to_company():
 	doc = frappe.get_doc("DocType", "GravityZone Company")
-	existing = {f.fieldname for f in doc.fields}
-	# Put them next to the mapping fields at the top of the form (after min_qty).
-	idx = next(i for i, f in enumerate(doc.fields) if f.fieldname == "min_qty")
-	new_fields = []
+	by_name = {f.fieldname: f for f in doc.fields}
+	changed = False
 
-	if "parent_company" not in existing:
-		new_fields.append(
+	exclude_help = "Skip this company in every sync: nothing is read or billed for it. Never set automatically."
+	if "exclude_from_sync" in by_name and by_name["exclude_from_sync"].description != exclude_help:
+		by_name["exclude_from_sync"].description = exclude_help
+		changed = True
+
+	def insert_after(anchor, field):
+		position = next(i for i, f in enumerate(doc.fields) if f.fieldname == anchor)
+		doc.append("fields", field, position + 1)
+
+	if "parent_company" not in by_name:
+		insert_after(
+			"min_qty",
 			{
 				"fieldname": "parent_company",
 				"fieldtype": "Link",
@@ -857,22 +868,92 @@ def add_sub_company_fields_to_company():
 				"label": "Parent Company",
 				"read_only": 1,
 				"description": "Set by Discover Companies for a sub-company of another GravityZone company.",
-			}
+			},
 		)
-	if "exclude_from_sync" not in existing:
-		new_fields.append(
+		changed = True
+
+	if "usage_includes_sub_companies" not in by_name:
+		insert_after(
+			"parent_company",
+			{
+				"fieldname": "usage_includes_sub_companies",
+				"fieldtype": "Check",
+				"label": "Usage Includes Sub-Companies",
+				"description": (
+					"GravityZone adds a sub-company's usage to its parent's counters. Ticked, the sync bills "
+					"this company only for its own share: its counters minus its direct sub-companies'. "
+					"Set automatically for a company that has sub-companies; un-tick if its counters turn out "
+					"not to include them."
+				),
+			},
+		)
+		changed = True
+
+	if "exclude_from_sync" not in by_name:
+		insert_after(
+			"usage_includes_sub_companies",
 			{
 				"fieldname": "exclude_from_sync",
 				"fieldtype": "Check",
 				"label": "Exclude from Sync",
-				"description": (
-					"Set automatically for a company that has sub-companies: its usage counters appear "
-					"to be the sum of its sub-companies', so syncing both would bill every seat twice."
-				),
-			}
+				"description": exclude_help,
+			},
 		)
+		changed = True
 
-	for offset, field in enumerate(new_fields, start=1):
-		doc.append("fields", field, idx + offset)
-	if new_fields:
+	if changed:
 		doc.save(ignore_permissions=True)
+
+
+def refresh_settings_defaults_and_help():
+	"""Bring an already-installed GravityZone Settings in line with the current
+	defaults/help text: the cloud API host (the old ``cloud.`` host rejected a
+	valid key on a live tenant — the Access URL Control Center shows is
+	authoritative) and which API-key checkboxes are needed.
+	"""
+	doc = frappe.get_doc("DocType", "GravityZone Settings")
+	api_help = (
+		"Control Center &gt; My Account &gt; API keys. The key needs the Network and Licensing "
+		"APIs (Partner tier) to list companies and read license counts, plus Companies only "
+		"if new ERPNext Customers should get address/contact data from GravityZone."
+	)
+	url_default = "https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc"
+	url_help = (
+		"The Access URL shown next to the API keys in Control Center, plus /v1.0/jsonrpc. "
+		"Cloud tenants: https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc; on-prem "
+		"installs use their own hostname. A valid key sent to the wrong host is answered with "
+		"\"Invalid API key\"."
+	)
+	changed = False
+	for field in doc.fields:
+		if field.fieldname == "api_key" and field.description != api_help:
+			field.description = api_help
+			changed = True
+		if field.fieldname == "base_url" and (field.default != url_default or field.description != url_help):
+			field.default = url_default
+			field.description = url_help
+			changed = True
+	if changed:
+		doc.save(ignore_permissions=True)
+
+
+def add_companies_using_to_product_mapping():
+	doc = frappe.get_doc("DocType", "GravityZone Product Mapping")
+	if any(f.fieldname == "companies_using" for f in doc.fields):
+		return
+
+	doc.append(
+		"fields",
+		{
+			"fieldname": "companies_using",
+			"fieldtype": "Int",
+			"label": "Companies Using",
+			"read_only": 1,
+			"in_list_view": 1,
+			"description": (
+				"How many GravityZone companies had a non-zero value for this counter at the last "
+				"Discover License Types run. 0 means the counter exists but nobody uses it yet."
+			),
+		},
+	)
+	doc.save(ignore_permissions=True)

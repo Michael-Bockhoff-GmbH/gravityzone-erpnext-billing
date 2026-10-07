@@ -9,18 +9,18 @@ frappe.ui.form.on("GravityZone Settings", {
 				freeze: true,
 				freeze_message: __("Fetching companies from GravityZone..."),
 			}).then((r) => {
-				const { created = 0, updated = 0, sub_companies = 0, excluded_parents = 0 } = r.message || {};
+				const { created = 0, updated = 0, sub_companies = 0, parents_marked = 0 } = r.message || {};
 				let message = __("Created {0} and updated {1} GravityZone Company record(s), {2} of them sub-companies.", [
 					created,
 					updated,
 					sub_companies,
 				]);
-				if (excluded_parents) {
+				if (parents_marked) {
 					message +=
 						"<br><br>" +
 						__(
-							"{0} company(ies) with sub-companies were set to Exclude from Sync, because their usage counters appear to be the sum of their sub-companies' — each sub-company is synced and billed individually instead.",
-							[excluded_parents]
+							"{0} company(ies) with sub-companies were marked 'Usage Includes Sub-Companies': GravityZone adds a sub-company's usage to its parent's counters, so the parent is billed only for its own share (its counters minus its sub-companies'). Un-tick it on the record if that's not the case.",
+							[parents_marked]
 						);
 				}
 				frappe.msgprint(message);
@@ -39,12 +39,18 @@ frappe.ui.form.on("GravityZone Settings", {
 						freeze: true,
 						freeze_message: __("Creating Customers..."),
 					}).then((r) => {
-						const { created = 0, linked = 0 } = r.message || {};
-						frappe.msgprint(
+						const { created = 0, linked = 0, addresses = 0, contacts = 0, notes = [] } = r.message || {};
+						let message =
 							created || linked
 								? __("Created {0} ERPNext Customer(s), linked {1} existing one(s) with the same name.", [created, linked])
-								: __("Nothing to do: every GravityZone Company already has an ERPNext Customer or is excluded from sync.")
-						);
+								: __("Nothing to do: every GravityZone Company already has an ERPNext Customer or is excluded from sync.");
+						if (created) {
+							message += " " + __("Imported {0} address(es) and {1} contact(s) from GravityZone.", [addresses, contacts]);
+						}
+						if (notes.length) {
+							message += "<br><br>" + notes.map((n) => frappe.utils.escape_html(n)).join("<br>");
+						}
+						frappe.msgprint(message);
 						frappe.set_route("List", "GravityZone Company");
 					});
 				}
@@ -52,28 +58,45 @@ frappe.ui.form.on("GravityZone Settings", {
 		});
 
 		frm.add_custom_button(__("Discover License Types"), () => {
-			frappe.call({
-				method: "gravityzone_billing.sync.discover_license_types",
-				freeze: true,
-				freeze_message: __("Reading licenses from GravityZone..."),
-			}).then((r) => {
-				const { companies = 0, types = 0, created = 0 } = r.message || {};
-				frappe.msgprint({
-					title: __("GravityZone License Types"),
-					message:
-						__("Read {0} companies, found {1} license type(s) in use, created {2} new Product Mapping row(s).", [
-							companies,
-							types,
-							created,
-						]) +
-						"<br><br>" +
-						__(
-							"Open the Product Mapping list, pick the ERPNext Subscription Plan / Item for each type you bill, then enable it. Note that Endpoint Security and the MSP package counters count the same seats — enable only the ones you actually invoice, or each seat is billed twice."
+			frappe.prompt(
+				[
+					{
+						fieldname: "include_unused",
+						fieldtype: "Check",
+						label: __("Also add license types nobody uses yet"),
+						default: 1,
+						description: __(
+							"Adds every license type GravityZone knows (the full catalogue, about 30 more) as disabled rows, so all of them can be assigned in advance. Un-tick to add only the ones in use."
 						),
-					indicator: "green",
-				});
-				frappe.set_route("List", "GravityZone Product Mapping");
-			});
+					},
+				],
+				(values) => {
+					frappe.call({
+						method: "gravityzone_billing.sync.discover_license_types",
+						args: { include_unused: values.include_unused ? 1 : 0 },
+						freeze: true,
+						freeze_message: __("Reading licenses from GravityZone..."),
+					}).then((r) => {
+						const { companies = 0, types = 0, catalogue = 0, created = 0 } = r.message || {};
+						frappe.msgprint({
+							title: __("GravityZone License Types"),
+							message:
+								__(
+									"Read {0} companies. GravityZone knows {1} license type(s), {2} of them in use. Created {3} new Product Mapping row(s) (all disabled).",
+									[companies, catalogue, types, created]
+								) +
+								"<br><br>" +
+								__(
+									"Open the Product Mapping list (sort by Companies Using), pick the ERPNext Subscription Plan / Item for each type you bill, then enable it. Note that Endpoint Security and the MSP package counters count the same seats — enable only the ones you actually invoice, or each seat is billed twice."
+								),
+							indicator: "green",
+						});
+						frappe.set_route("List", "GravityZone Product Mapping");
+					});
+				},
+				__("Discover License Types"),
+				__("Read licenses")
+			);
 		});
 
 		frm.add_custom_button(__("Sync Licenses Now"), () => {

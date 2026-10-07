@@ -63,7 +63,9 @@ bench --site your-site install-app simple_subscription
 1. **Create a dedicated GravityZone API key.** In GravityZone Control
    Center, go to *My Account → API keys* and create a key with access to
    only the **Network** and **Licensing** APIs (Partner tier — a
-   non-partner "Cloud Solutions" account cannot list companies).
+   non-partner "Cloud Solutions" account cannot list companies). Leave
+   **Companies** (*Unternehmen*) off unless you want the optional address and
+   contact import for new ERPNext Customers — see the security note.
 
    > **Security note:** GravityZone scopes API keys per whole service, with
    > no read/write split within a service. The Licensing API toggle that
@@ -73,9 +75,17 @@ bench --site your-site install-app simple_subscription
    > Licensing key that is read-only at the GravityZone level. This app
    > never calls those write methods, but a leaked key is only as safe as
    > the services you enabled on it. Create a **separate key for this
-   > integration** with just Network + Licensing checked — leave Companies,
-   > Accounts, Policies, and Reports unchecked — so a leak here can't be
-   > used to create/delete/suspend companies or touch anything else.
+   > integration** with just Network + Licensing checked — leave Accounts,
+   > Policies, and Reports unchecked — so a leak here can't touch anything
+   > else.
+   >
+   > **Companies is the exception to think about:** the Companies API also
+   > contains `createCompany`, `deleteCompany`, `suspendCompany` and
+   > `updateCompanyDetails`. It is only needed for the contact-data import
+   > (`getCompanyDetails`), and GravityZone's company data is sparse (see
+   > below), so the safer default is to leave it off. Without it everything
+   > else works; new Customers are then created without address/contact and
+   > the result says "contact data not loaded".
    >
    > **Troubleshooting:** if **Discover Companies** or a sync fails with
    > `Invalid API key. Please generate an API key in Control Center.` (HTTP
@@ -100,7 +110,7 @@ bench --site your-site install-app simple_subscription
      API keys in Control Center, plus `/v1.0/jsonrpc`. For a cloud tenant
      that is `https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc`;
      on-prem Control Center installs use their own hostname. The prefilled
-     default may not match your tenant — check it.
+     default is the cloud host above; check it against your Access URL.
    - **License Metric** — *License Info* (current allocated seats),
      *Monthly Usage* (actual monthly consumption; Bitdefender's recommended
      source for billing reconciliation), or *Per-Product Monthly Usage* (see
@@ -126,19 +136,41 @@ bench --site your-site install-app simple_subscription
    the whole company tree: sub-companies are recorded individually with a
    **Parent Company** link (GravityZone has no recursive listing, so each
    partner-type company is asked for its children via `getCompaniesList`'s
-   `parentId`). A company that has sub-companies is set to **Exclude from
-   Sync**, because its usage counters appear to be the sum of its
-   children's (seen on a live tenant, not documented) and syncing both would
-   bill every seat twice; un-tick it if you really want the parent billed.
-   Then give each company an **ERPNext Customer**: click **Create Missing
-   ERPNext Customers** (GravityZone Settings) or **Create ERPNext
-   Customers** (top of the GravityZone Company list) to create one for every
-   company that has none — named after the GravityZone company, linking an
-   existing Customer with exactly that name instead of duplicating it — or
-   use **Create ERPNext Customer** on a single record, or pick an existing
-   Customer yourself. New Customers only get a name and type "Company"
-   (group, territory, tax ID and address are left for you). Optionally set a
-   **Minimum Billable Seats** floor for minimum-commit contracts.
+   `parentId`).
+
+   **Parents and sub-companies.** GravityZone adds a sub-company's usage to
+   its parent's counters — checked live: a parent with no endpoints of its
+   own reported exactly its two children's seats. Billing both would count
+   every seat twice. A company that gains its first sub-company is therefore
+   marked **Usage Includes Sub-Companies**, and the sync bills it only for
+   its **own share**: its counters minus its direct sub-companies'. A parent
+   with no licenses of its own comes out at 0 (and gets no billing document
+   as long as it is 0); one that has its own licenses is billed for exactly
+   those. Un-tick the mark if a company's counters turn out not to include
+   its sub-companies. **Exclude from Sync** is a separate, manual switch that
+   skips a company entirely; it is never set automatically.
+
+   **ERPNext Customers.** Click **Create Missing ERPNext Customers**
+   (GravityZone Settings) or **Create ERPNext Customers** (top of the
+   GravityZone Company list) to create one for every company that has none —
+   named after the GravityZone company, linking an existing Customer with
+   exactly that name instead of duplicating it. Or use **Create ERPNext
+   Customer** on a single record: it is always available, and on a company
+   that is already linked it asks for confirmation first, then links the
+   company to a Customer named after it. The old Customer is not changed;
+   the company's billing-document link is cleared because that document
+   belongs to the old Customer (the next sync creates a new one for the new
+   Customer, the old one is yours to cancel). A newly created Customer
+   gets only a name and type "Company", plus — best effort — an **Address**
+   and **Contact** from GravityZone. GravityZone's data is sparse: the
+   address is a single free-text string, often empty (on the tenant this was
+   checked against it held only street and number, no ZIP or city — ERPNext
+   requires a city, so it is skipped and reported rather than guessed), the
+   phone is free text, and a contact person exists only on partner-type
+   companies. Reading it needs the **Companies / Unternehmen** checkbox on
+   the API key. Customer Group, Territory and tax IDs are never filled.
+   Optionally set a **Minimum Billable Seats** floor for minimum-commit
+   contracts.
 5. Click **Sync Licenses Now** to run the first sync immediately, or wait for
    the daily scheduled job. Each **GravityZone Company** record shows its
    last synced quantity, the linked **Subscription**, and a **Sync History**
@@ -201,13 +233,21 @@ one flat per-seat line.
    each company holds in the **GravityZone Licenses** field on its record
    (e.g. `Model: mspSecurePlus | Subscription: Monthly | Usage: Endpoint
    Security 13, MSP Secure Plus 13`), and creates one *disabled* mapping row
-   for every counter that is in use. You then only pick the Plan/Item per
-   row and enable it. (Bitdefender's API has no "list of licenses" for
+   per counter. The dialog asks whether to **also add license types nobody
+   uses yet** (ticked by default): GravityZone returns its full counter set
+   for every company, zeros included — 33 counters on the tenant this was
+   checked against, 3 of them in use — so ticking it gives you the complete
+   catalogue to assign in advance, and the **Companies Using** column shows
+   which ones are actually in use (un-tick it to get only those). You then
+   only pick the Plan/Item per row and enable it. (Bitdefender's API has no "list of licenses" for
    monthly-subscription companies — the model and the counters *are* the
    licenses. Yearly license keys, `subscriptionType` 2, can additionally
    return an `additionalLicenses` list via `getLicenseInfo`'s
-   `returnAllProducts` option; this app doesn't read that yet.) Or add the
-   rows by hand, one per product:
+   `returnAllProducts` option; this app doesn't read that yet. **MDR**
+   (Managed Detection & Response) appears under `licensedServices` as a
+   status, but has no usage counter in practice — `mdrFoundationsMonthlyUsage`
+   was 0 for companies with MDR active — so it can't be billed from
+   counters.) Or add the rows by hand, one per product:
    - **GravityZone Usage Field** — the counter name from GravityZone's
      `getMonthlyUsagePerProductType` response. Counters seen on a live cloud
      tenant: `endpointMonthlyUsage` (base Endpoint Security),

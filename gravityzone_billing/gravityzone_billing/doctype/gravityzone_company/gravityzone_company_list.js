@@ -2,16 +2,24 @@
 // For license information, please see license.txt
 
 function show_customer_result(r, listview) {
-	const { created = 0, linked = 0, skipped = 0 } = r.message || {};
+	const { created = 0, linked = 0, skipped = 0, addresses = 0, contacts = 0, notes = [] } = r.message || {};
 	const nothing_to_do = !created && !linked;
+	let message = nothing_to_do
+		? __("Nothing to do: every GravityZone Company already has an ERPNext Customer or is excluded from sync.")
+		: __("Created {0}, linked {1} existing Customer(s) with the same name, skipped {2} that already had one.", [
+				created,
+				linked,
+				skipped,
+			]);
+	if (created) {
+		message += " " + __("Imported {0} address(es) and {1} contact(s) from GravityZone.", [addresses, contacts]);
+	}
+	if (notes.length) {
+		message += "<br><br>" + notes.map((n) => frappe.utils.escape_html(n)).join("<br>");
+	}
 	frappe.msgprint({
 		title: __("ERPNext Customers"),
-		message: nothing_to_do
-			? __("Nothing to do: every GravityZone Company already has an ERPNext Customer or is excluded from sync.")
-			: __(
-					"Created {0}, linked {1} existing Customer(s) with the same name, skipped {2} that already had one.",
-					[created, linked, skipped]
-				),
+		message,
 		indicator: nothing_to_do ? "orange" : "green",
 	});
 	listview.refresh();

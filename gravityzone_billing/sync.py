@@ -28,9 +28,10 @@ import re
 from datetime import date
 
 import frappe
-from frappe.utils import now_datetime
+from frappe.utils import cint, now_datetime
 
 from gravityzone_billing.billing_backends import SIMPLE_SUBSCRIPTION, get_backend, target_for
+from gravityzone_billing.customer_data import build_contact, parse_address
 from gravityzone_billing.gravityzone_client import GravityZoneClient, GravityZoneError
 
 
@@ -136,6 +137,14 @@ def _sync_company_flat(client: GravityZoneClient, settings, company):
 
 	if doc is None:
 		doc = backend.find_existing_with_target(company.customer, target)
+	if doc is None and qty == 0:
+		# e.g. a parent whose licenses all belong to its sub-companies: no empty billing document.
+		company.last_synced_on = now_datetime()
+		company.last_sync_message = "Nothing to bill: 0 licenses and no billing document yet"
+		company.save(ignore_permissions=True)
+		frappe.db.commit()
+		return
+
 	created = doc is None
 	if created:
 		doc = backend.create(company.customer, settings.default_company, settings, target, qty)
@@ -156,20 +165,47 @@ def _sync_company_flat(client: GravityZoneClient, settings, company):
 	frappe.db.commit()
 
 
-def _get_license_qty(client: GravityZoneClient, settings, company) -> int:
+def _metric_qty(client: GravityZoneClient, settings, gz_company_id: str) -> int:
+	"""The seat count GravityZone reports for one company under the chosen License Metric."""
 	if settings.license_metric == "Monthly Usage":
-		usage = client.get_monthly_usage(company.gz_company_id, date.today().strftime("%m/%Y"))
+		usage = client.get_monthly_usage(gz_company_id, date.today().strftime("%m/%Y"))
 		qty = usage.get("endpointMonthlyUsage")
 		if qty is None:
 			raise GravityZoneError(
 				None, f"getMonthlyUsage returned no endpointMonthlyUsage; got: {sorted(usage)}"
 			)
-		qty = int(qty)
-	else:
-		info = client.get_license_info(company.gz_company_id)
-		qty = info.used_licenses
+		return int(qty)
+	return client.get_license_info(gz_company_id).used_licenses
 
+
+def _child_companies(client: GravityZoneClient, gz_company_id: str) -> list:
+	"""Direct sub-companies; a customer-type company has none (GravityZone answers
+	-32602 for parentId, which means "no children", not a failure).
+	"""
+	try:
+		return client.get_companies_list(parent_id=gz_company_id)
+	except GravityZoneError as error:
+		if error.code != -32602:
+			raise
+		return []
+
+
+def _get_license_qty(client: GravityZoneClient, settings, company) -> int:
+	qty = _metric_qty(client, settings, company.gz_company_id)
+	if company.usage_includes_sub_companies:
+		qty -= sum(
+			_metric_qty(client, settings, child.id) for child in _child_companies(client, company.gz_company_id)
+		)
 	return max(qty, company.min_qty or 0)
+
+
+def _subtract_usage(total: dict, children: list) -> dict:
+	"""A parent's own counters: its reported totals minus its direct sub-companies'
+	(never below zero).
+	"""
+	return {
+		field: max(value - sum(child.get(field, 0) for child in children), 0) for field, value in total.items()
+	}
 
 
 def _existing_billing_doc(backend, company):
@@ -202,7 +238,14 @@ def _sync_company_per_product(client: GravityZoneClient, settings, company):
 		frappe.db.commit()
 		return
 
-	usages = client.get_monthly_usage_per_product_type(company.gz_company_id, date.today().strftime("%m/%Y"))
+	month = date.today().strftime("%m/%Y")
+	usages = client.get_monthly_usage_per_product_type(company.gz_company_id, month)
+	if company.usage_includes_sub_companies:
+		children = [
+			client.get_monthly_usage_per_product_type(child.id, month)
+			for child in _child_companies(client, company.gz_company_id)
+		]
+		usages = _subtract_usage(usages, children)
 
 	doc = _existing_billing_doc(backend, company)
 
@@ -227,6 +270,10 @@ def _sync_company_per_product(client: GravityZoneClient, settings, company):
 			any_flagged = True
 			_append_history(company, baseline, qty, "Flagged for Review", message, product=mapping.label)
 			summary.append(f"{mapping.label}: needs review")
+			continue
+
+		if doc is None and qty == 0:
+			summary.append(f"{mapping.label}: nothing to bill")
 			continue
 
 		if doc is None:
@@ -442,16 +489,20 @@ def discover_companies():
 	Company records (without a Customer assigned yet, for the user to fill in).
 
 	Sub-companies are recorded individually with a link to their parent. A
-	parent that gains its first sub-company here is marked Exclude from Sync,
-	because its usage counters appear to be the sum of its children's and
-	syncing both would bill every seat twice. That mark is only set at that
-	moment, so un-ticking it later sticks.
+	parent that gains its first sub-company here is marked "Usage includes
+	sub-companies": GravityZone adds a sub-company's usage to its parent's
+	counters (checked live: a parent with no endpoints of its own reported
+	exactly its children's seats), so the sync bills the parent only for its
+	own share — its counters minus its direct sub-companies'. A parent with
+	no licenses of its own therefore comes out at 0, one with its own gets
+	exactly those. The mark is only set at that moment, so un-ticking it
+	later sticks.
 	"""
 	frappe.only_for("System Manager")
 	settings = frappe.get_single("GravityZone Settings")
 	client = GravityZoneClient(api_key=settings.get_password("api_key"), base_url=settings.base_url)
 
-	created = updated = sub_companies = excluded_parents = 0
+	created = updated = sub_companies = parents_marked = 0
 	for company, parent_id in _collect_company_tree(client):
 		if parent_id:
 			sub_companies += 1
@@ -476,15 +527,15 @@ def discover_companies():
 		created += 1
 
 		if first_child:
-			frappe.db.set_value("GravityZone Company", parent_id, "exclude_from_sync", 1)
-			excluded_parents += 1
+			frappe.db.set_value("GravityZone Company", parent_id, "usage_includes_sub_companies", 1)
+			parents_marked += 1
 
 	frappe.db.commit()
 	return {
 		"created": created,
 		"updated": updated,
 		"sub_companies": sub_companies,
-		"excluded_parents": excluded_parents,
+		"parents_marked": parents_marked,
 	}
 
 
@@ -529,15 +580,34 @@ def _license_summary(info: dict, usage: dict) -> str:
 	return " | ".join(parts)
 
 
+def _license_catalogue(usages: list) -> dict:
+	"""Every counter GravityZone reports, mapped to how many of the given
+	companies have a non-zero value for it. GravityZone returns the full counter
+	set for every company — zeros included — so this is the complete list of
+	license types the API knows, not just the ones in use.
+	"""
+	catalogue = {}
+	for usage in usages:
+		for field, value in usage.items():
+			catalogue[field] = catalogue.get(field, 0) + (1 if value else 0)
+	return catalogue
+
+
 @frappe.whitelist()
-def discover_license_types():
+def discover_license_types(include_unused=0):
 	"""Read every GravityZone Company's license model and this month's usage
 	counters, write a readable summary onto each company, and create a
-	(disabled, still unassigned) GravityZone Product Mapping row for every
-	counter that is non-zero for at least one company — so each license type
-	only needs an ERPNext Item / Subscription Plan picked and enabling.
+	(disabled, still unassigned) GravityZone Product Mapping row per counter —
+	so each license type only needs an ERPNext Item / Subscription Plan picked
+	and enabling.
+
+	By default only counters that are non-zero for at least one company get a
+	row. With ``include_unused`` every counter the API knows gets one (the full
+	catalogue, ~30 more), so that all of them can be assigned in advance.
+	``companies_using`` on each row says how many companies use it.
 	"""
 	frappe.only_for("System Manager")
+	include_unused = cint(include_unused)
 	settings = frappe.get_single("GravityZone Settings")
 	companies = frappe.get_all("GravityZone Company", fields=["name", "gz_company_id"])
 	if not companies:
@@ -546,21 +616,22 @@ def discover_license_types():
 	client = GravityZoneClient(api_key=settings.get_password("api_key"), base_url=settings.base_url)
 	month = date.today().strftime("%m/%Y")
 
-	companies_per_counter = {}
+	usages = []
 	for company in companies:
 		info = client.get_license_info(company.gz_company_id).raw
-		usage = {
-			field: value
-			for field, value in client.get_monthly_usage_per_product_type(company.gz_company_id, month).items()
-			if value
-		}
-		for field in usage:
-			companies_per_counter[field] = companies_per_counter.get(field, 0) + 1
-		frappe.db.set_value("GravityZone Company", company.name, "licenses_summary", _license_summary(info, usage))
+		usage = client.get_monthly_usage_per_product_type(company.gz_company_id, month)
+		usages.append(usage)
+		in_use = {field: value for field, value in usage.items() if value}
+		frappe.db.set_value("GravityZone Company", company.name, "licenses_summary", _license_summary(info, in_use))
 
+	catalogue = _license_catalogue(usages)
 	created = 0
-	for field in sorted(companies_per_counter):
+	for field in sorted(catalogue):
+		companies_using = catalogue[field]
 		if frappe.db.exists("GravityZone Product Mapping", field):
+			frappe.db.set_value("GravityZone Product Mapping", field, "companies_using", companies_using)
+			continue
+		if not companies_using and not include_unused:
 			continue
 		frappe.get_doc(
 			{
@@ -568,6 +639,7 @@ def discover_license_types():
 				"gz_usage_field": field,
 				"label": _counter_label(field),
 				"enabled": 0,
+				"companies_using": companies_using,
 			}
 		).insert(ignore_permissions=True, ignore_mandatory=True)
 		created += 1
@@ -575,9 +647,10 @@ def discover_license_types():
 	frappe.db.commit()
 	return {
 		"companies": len(companies),
-		"types": len(companies_per_counter),
+		"types": sum(1 for n in catalogue.values() if n),
+		"catalogue": len(catalogue),
 		"created": created,
-		"counters": companies_per_counter,
+		"counters": {field: n for field, n in catalogue.items() if n},
 	}
 
 
@@ -595,28 +668,126 @@ def create_missing_erpnext_customers():
 	return create_erpnext_customers(json.dumps(names))
 
 
-@frappe.whitelist()
-def create_erpnext_customers(company_names):
-	"""Give each GravityZone Company that has no ERPNext Customer yet one,
-	named after the GravityZone company. A Customer with exactly that name is
-	linked instead of creating a duplicate. Companies that already have a
-	Customer are left alone.
+def _import_contact_data(client, customer, customer_name, gz_company_id):
+	"""Best effort: copy what GravityZone knows (address text, phone, contact person)
+	onto a freshly created Customer. Returns ``(addresses, contacts, notes)``.
 
-	The new Customer gets only a name and type "Company" — Customer Group,
-	Territory, tax IDs and addresses are not known from GravityZone and are
-	left for you to fill in. All-or-nothing: if one fails, none are saved.
+	GravityZone's data is sparse and the address is unstructured, so anything that
+	can't be read reliably is skipped and reported in ``notes`` rather than guessed.
+	Each piece is saved on its own savepoint, so one failing never undoes the other
+	or the Customer itself.
+	"""
+	try:
+		details = client.get_company_details(gz_company_id)
+	except Exception as error:
+		return 0, 0, [f"{customer_name}: contact data not loaded ({error})"]
+
+	notes = []
+	address_name = contact_name = None
+	country_code = details.get("country")
+	country = (
+		frappe.db.get_value("Country", {"code": country_code.lower()}, "name") if country_code else None
+	)
+
+	if (details.get("address") or "").strip():
+		parsed = parse_address(details["address"], country_code)
+		if not parsed or not country:
+			notes.append(f"{customer_name}: address not in a recognizable format, not imported")
+		else:
+			frappe.db.savepoint("gz_address")
+			try:
+				address_name = (
+					frappe.get_doc(
+						{
+							"doctype": "Address",
+							"address_title": customer_name,
+							"address_type": "Billing",
+							"country": country,
+							"is_primary_address": 1,
+							"links": [{"link_doctype": "Customer", "link_name": customer}],
+							**parsed,
+						}
+					)
+					.insert(ignore_permissions=True)
+					.name
+				)
+			except Exception as error:
+				frappe.db.rollback(save_point="gz_address")
+				notes.append(f"{customer_name}: address not imported ({error})")
+
+	contact = build_contact(details, customer_name)
+	if contact:
+		frappe.db.savepoint("gz_contact")
+		try:
+			doc = {
+				"doctype": "Contact",
+				"first_name": contact["first_name"],
+				"last_name": contact["last_name"],
+				"designation": contact["designation"],
+				"is_primary_contact": 1,
+				"links": [{"link_doctype": "Customer", "link_name": customer}],
+			}
+			if contact["email"]:
+				doc["email_ids"] = [{"email_id": contact["email"], "is_primary": 1}]
+			if contact["phone"]:
+				doc["phone_nos"] = [{"phone": contact["phone"], "is_primary_phone": 1}]
+			contact_name = frappe.get_doc(doc).insert(ignore_permissions=True).name
+		except Exception as error:
+			frappe.db.rollback(save_point="gz_contact")
+			notes.append(f"{customer_name}: contact not imported ({error})")
+
+	if address_name or contact_name:
+		try:
+			doc = frappe.get_doc("Customer", customer)
+			if address_name and not doc.customer_primary_address:
+				doc.customer_primary_address = address_name
+			if contact_name and not doc.customer_primary_contact:
+				doc.customer_primary_contact = contact_name
+			doc.save(ignore_permissions=True)
+		except Exception as error:
+			notes.append(f"{customer_name}: imported, but could not be set as the Customer's primary ({error})")
+
+	return int(bool(address_name)), int(bool(contact_name)), notes
+
+
+@frappe.whitelist()
+def create_erpnext_customers(company_names, replace_existing=0):
+	"""Give each GravityZone Company an ERPNext Customer named after the
+	GravityZone company. A Customer with exactly that name is linked instead of
+	creating a duplicate.
+
+	Default: companies that already have a Customer are left alone. With
+	``replace_existing`` (the button on a single record, behind a confirmation),
+	the company is re-linked to a Customer named after it; the old Customer is
+	not touched, but the billing document link is cleared because that document
+	belongs to the old Customer — the next sync creates one for the new Customer
+	and the old one is left for you to cancel.
+
+	A newly created Customer also gets an Address and Contact from GravityZone
+	where the data allows (see ``_import_contact_data``); Customer Group,
+	Territory and tax IDs are not known from GravityZone and stay blank.
+	All-or-nothing for the Customers themselves: if one fails, none are saved.
 	"""
 	frappe.only_for("System Manager")
-	created = linked = skipped = 0
+	replace_existing = cint(replace_existing)
+	settings = frappe.get_single("GravityZone Settings")
+	client = GravityZoneClient(api_key=settings.get_password("api_key"), base_url=settings.base_url)
+	created = linked = skipped = addresses = contacts = 0
+	notes = []
 
 	for name in frappe.parse_json(company_names):
 		company = frappe.get_doc("GravityZone Company", name)
-		if company.customer:
+		if company.customer and not replace_existing:
 			skipped += 1
 			continue
 
 		customer_name = (company.gz_company_name or company.gz_company_id).strip()
 		customer = frappe.db.get_value("Customer", {"customer_name": customer_name}, "name")
+		if customer and customer == company.customer:
+			skipped += 1
+			notes.append(f"{customer_name}: already linked to that Customer")
+			continue
+
 		if customer:
 			linked += 1
 		else:
@@ -628,9 +799,29 @@ def create_erpnext_customers(company_names):
 				.name
 			)
 			created += 1
+			new_addresses, new_contacts, new_notes = _import_contact_data(
+				client, customer, customer_name, company.gz_company_id
+			)
+			addresses += new_addresses
+			contacts += new_contacts
+			notes += new_notes
 
+		previous = company.customer
 		company.customer = customer
+		if previous:
+			company.subscription = None
+			company.last_sync_message = (
+				f"Customer changed from {previous} to {customer}; the billing document of the old "
+				"Customer is no longer updated, the next sync creates a new one"
+			)
 		company.save(ignore_permissions=True)
 
 	frappe.db.commit()
-	return {"created": created, "linked": linked, "skipped": skipped}
+	return {
+		"created": created,
+		"linked": linked,
+		"skipped": skipped,
+		"addresses": addresses,
+		"contacts": contacts,
+		"notes": notes,
+	}

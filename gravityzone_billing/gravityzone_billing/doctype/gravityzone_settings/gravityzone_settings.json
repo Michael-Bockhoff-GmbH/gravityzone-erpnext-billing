@@ -34,13 +34,14 @@
    "label": "GravityZone Connection"
   },
   {
-   "description": "Control Center &gt; My Account &gt; API keys. The key needs access to the Network and Licensing APIs (Partner tier) to list companies and read license counts.",
+   "description": "Control Center &gt; My Account &gt; API keys. The key needs the Network and Licensing APIs (Partner tier) to list companies and read license counts, plus Companies only if new ERPNext Customers should get address/contact data from GravityZone.",
    "fieldname": "api_key",
    "fieldtype": "Password",
    "label": "API Key"
   },
   {
-   "default": "https://cloud.gravityzone.bitdefender.com/api/v1.0/jsonrpc",
+   "default": "https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc",
+   "description": "The Access URL shown next to the API keys in Control Center, plus /v1.0/jsonrpc. Cloud tenants: https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc; on-prem installs use their own hostname. A valid key sent to the wrong host is answered with \"Invalid API key\".",
    "fieldname": "base_url",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -159,7 +160,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-17 02:04:31.738345",
+ "modified": "2026-10-07 21:44:04.839451",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Settings",

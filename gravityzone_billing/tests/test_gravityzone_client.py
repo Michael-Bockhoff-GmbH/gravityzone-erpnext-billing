@@ -65,6 +65,15 @@ class TestGravityZoneClient(unittest.TestCase):
 
 		self.assertEqual([c.id for c in companies], ["1"])
 
+	def test_get_company_details_calls_the_companies_service(self):
+		response = _mock_response({"jsonrpc": "2.0", "id": 1, "result": {"type": 1, "country": "DE"}})
+		with patch.object(self.client._session, "post", return_value=response) as post:
+			details = self.client.get_company_details("company-1")
+
+		self.assertEqual(details["country"], "DE")
+		self.assertTrue(post.call_args.args[0].endswith("/companies/"))
+		self.assertEqual(post.call_args.kwargs["json"]["params"], {"companyId": "company-1"})
+
 	def test_get_license_info(self):
 		response = _mock_response(
 			{"jsonrpc": "2.0", "id": 1, "result": {"usedLicenses": 7, "additionalLicenses": 10}}

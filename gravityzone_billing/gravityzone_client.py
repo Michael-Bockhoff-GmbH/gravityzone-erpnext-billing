@@ -129,6 +129,16 @@ class GravityZoneClient:
 		items = result.get("items", []) if isinstance(result, dict) else (result or [])
 		return [Company(id=str(item.get("id")), name=item.get("name", ""), raw=item) for item in items]
 
+	def get_company_details(self, company_id):
+		"""Master data of one company (Companies service ``getCompanyDetails``; the API key
+		needs the Companies / "Unternehmen" checkbox for this one).
+
+		Verified live: ``type`` (0 partner, 1 customer), ``country`` (ISO code), ``phone``
+		and ``address`` (a single free-text string, usually empty), ``parentCompanyId``,
+		``companyPath``, and ``contactPerson`` on partner-type companies only.
+		"""
+		return self._call("companies", "getCompanyDetails", {"companyId": company_id}) or {}
+
 	def get_license_info(self, company_id):
 		"""Current seat usage for a company (Licensing service).
 

@@ -13,7 +13,8 @@
   "column_break_product_mapping",
   "subscription_plan",
   "enabled",
-  "item"
+  "item",
+  "companies_using"
  ],
  "fields": [
   {
@@ -59,12 +60,20 @@
    "in_list_view": 1,
    "label": "Item (Simple Subscription)",
    "options": "Item"
+  },
+  {
+   "description": "How many GravityZone companies had a non-zero value for this counter at the last Discover License Types run. 0 means the counter exists but nobody uses it yet.",
+   "fieldname": "companies_using",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Companies Using",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-17 02:04:32.132497",
+ "modified": "2026-10-07 21:44:06.241570",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Product Mapping",

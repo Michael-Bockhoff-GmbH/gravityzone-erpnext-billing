@@ -14,6 +14,7 @@
   "customer",
   "min_qty",
   "parent_company",
+  "usage_includes_sub_companies",
   "exclude_from_sync",
   "status_section",
   "billing_doctype",
@@ -164,16 +165,23 @@
   },
   {
    "default": "0",
-   "description": "Set automatically for a company that has sub-companies: its usage counters appear to be the sum of its sub-companies', so syncing both would bill every seat twice.",
+   "description": "Skip this company in every sync: nothing is read or billed for it. Never set automatically.",
    "fieldname": "exclude_from_sync",
    "fieldtype": "Check",
    "label": "Exclude from Sync"
+  },
+  {
+   "default": "0",
+   "description": "GravityZone adds a sub-company's usage to its parent's counters. Ticked, the sync bills this company only for its own share: its counters minus its direct sub-companies'. Set automatically for a company that has sub-companies; un-tick if its counters turn out not to include them.",
+   "fieldname": "usage_includes_sub_companies",
+   "fieldtype": "Check",
+   "label": "Usage Includes Sub-Companies"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-07 21:29:42.867295",
+ "modified": "2026-10-07 21:37:45.271043",
  "modified_by": "Administrator",
  "module": "GravityZone Billing",
  "name": "GravityZone Company",

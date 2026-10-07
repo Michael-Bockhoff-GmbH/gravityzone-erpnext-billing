@@ -3,7 +3,7 @@
 
 import unittest
 
-from gravityzone_billing.sync import _counter_label, _license_summary
+from gravityzone_billing.sync import _counter_label, _license_catalogue, _license_summary
 
 
 class TestCounterLabel(unittest.TestCase):
@@ -50,3 +50,24 @@ class TestLicenseSummary(unittest.TestCase):
 		summary = _license_summary({"subscriptionType": 99}, {})
 
 		self.assertEqual(summary, "Model: n/a | Subscription: 99")
+
+
+class TestLicenseCatalogue(unittest.TestCase):
+	def test_lists_every_counter_even_when_nobody_uses_it(self):
+		usages = [
+			{"endpointMonthlyUsage": 13, "mspSecurePlusMonthlyUsage": 13, "edrMonthlyUsage": 0},
+			{"endpointMonthlyUsage": 1, "mspSecurePlusMonthlyUsage": 0, "edrMonthlyUsage": 0},
+		]
+
+		self.assertEqual(
+			_license_catalogue(usages),
+			{"endpointMonthlyUsage": 2, "mspSecurePlusMonthlyUsage": 1, "edrMonthlyUsage": 0},
+		)
+
+	def test_counter_missing_for_one_company_still_appears(self):
+		usages = [{"endpointMonthlyUsage": 2}, {"endpointMonthlyUsage": 1, "aLaCarteMonthlyUsage": 1}]
+
+		self.assertEqual(_license_catalogue(usages), {"endpointMonthlyUsage": 2, "aLaCarteMonthlyUsage": 1})
+
+	def test_no_companies_no_catalogue(self):
+		self.assertEqual(_license_catalogue([]), {})
