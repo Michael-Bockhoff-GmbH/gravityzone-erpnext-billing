@@ -77,14 +77,19 @@ bench --site your-site install-app simple_subscription
    > Accounts, Policies, and Reports unchecked — so a leak here can't be
    > used to create/delete/suspend companies or touch anything else.
    >
-   > **Troubleshooting (confirmed live):** on a German Control Center UI,
-   > the API key dialog shows **Unternehmen** (Companies) and **Netzwerk**
-   > (Network) as separate checkboxes. It's tempting to check "Unternehmen"
-   > for "list my companies," but `getCompaniesList` (used by **Discover
-   > Companies**) actually lives under **Netzwerk**/Network — without it
-   > you'll get `401 Client Error: Unauthorized for url:
-   > .../jsonrpc/network/`. Check Netzwerk (Unternehmen isn't required for
-   > anything this app calls, but doesn't hurt to leave it on either).
+   > **Troubleshooting:** if **Discover Companies** or a sync fails with
+   > `Invalid API key. Please generate an API key in Control Center.` (HTTP
+   > 401), GravityZone doesn't recognize the key on the host this app is
+   > calling. That is an authentication problem, not a missing API scope:
+   > check that the key in GravityZone Settings is the one currently shown
+   > in Control Center, and that **API Base URL** matches the *Access URL*
+   > (Zugriffs-URL) Control Center shows next to the API keys — cloud
+   > tenants can differ (e.g. `cloud.…` vs `cloudgz.…`).
+   >
+   > Which checkbox gates `getCompaniesList` — **Netzwerk**/Network (as the
+   > Bitdefender docs suggest) or **Unternehmen**/Companies — has not yet
+   > been verified against a working key. If the key is accepted but the
+   > call is refused, enable the other one and retry.
 2. **Create the billing Item** in ERPNext (Selling): one non-stock Item
    (e.g. "GravityZone License Seat") priced per seat. If you're using the
    **ERPNext Subscription** backend, also create a **Subscription Plan**
