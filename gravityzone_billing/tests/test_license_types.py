@@ -71,3 +71,24 @@ class TestLicenseCatalogue(unittest.TestCase):
 
 	def test_no_companies_no_catalogue(self):
 		self.assertEqual(_license_catalogue([]), {})
+
+
+class TestParentLicenseSummary(unittest.TestCase):
+	def test_parent_shows_own_usage_and_sub_companies_separately(self):
+		info = {"assignedProtectionModel": "mspSecure", "subscriptionType": 3}
+
+		summary = _license_summary(
+			info, {}, sub_company_total={"endpointMonthlyUsage": 2, "mspSecurePlusMonthlyUsage": 1}, sub_company_count=2
+		)
+
+		self.assertIn("Own usage: none", summary)
+		self.assertIn("Sub-companies (2): Endpoint Security 2, MSP Secure Plus 1", summary)
+
+	def test_parent_with_own_licenses(self):
+		summary = _license_summary({}, {"endpointMonthlyUsage": 3}, sub_company_total={}, sub_company_count=1)
+
+		self.assertIn("Own usage: Endpoint Security 3", summary)
+		self.assertIn("Sub-companies (1): no usage", summary)
+
+	def test_plain_company_unchanged(self):
+		self.assertNotIn("Own usage", _license_summary({}, {"endpointMonthlyUsage": 1}))

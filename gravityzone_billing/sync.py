@@ -580,9 +580,18 @@ def _counter_label(field: str) -> str:
 	return " ".join(w.upper() if w.lower() in _ACRONYMS else w[:1].upper() + w[1:] for w in words)
 
 
-def _license_summary(info: dict, usage: dict) -> str:
+def _counters_text(usage: dict) -> str:
+	return ", ".join(f"{_counter_label(f)} {v}" for f, v in sorted(usage.items()) if v)
+
+
+def _license_summary(info: dict, usage: dict, sub_company_total: dict = None, sub_company_count: int = 0) -> str:
 	"""One line describing what a company holds: protection model, subscription
 	type, any additional product types, and this month's non-zero counters.
+
+	For a parent whose reported counters include its sub-companies, ``usage`` is
+	its *own* share and ``sub_company_total`` the sub-companies' combined counters,
+	so the line says who actually holds the licenses instead of showing the sum
+	under the parent's name.
 	"""
 	subscription = SUBSCRIPTION_TYPES.get(info.get("subscriptionType"), info.get("subscriptionType"))
 	parts = [f"Model: {info.get('assignedProtectionModel') or 'n/a'}", f"Subscription: {subscription}"]
@@ -591,9 +600,15 @@ def _license_summary(info: dict, usage: dict) -> str:
 	if extra:
 		parts.append("Additional products: " + ", ".join(extra))
 
-	counters = ", ".join(f"{_counter_label(f)} {v}" for f, v in sorted(usage.items()))
-	if counters:
-		parts.append("Usage: " + counters)
+	if sub_company_total is None:
+		counters = _counters_text(usage)
+		if counters:
+			parts.append("Usage: " + counters)
+	else:
+		parts.append("Own usage: " + (_counters_text(usage) or "none"))
+		parts.append(
+			f"Sub-companies ({sub_company_count}): " + (_counters_text(sub_company_total) or "no usage")
+		)
 	return " | ".join(parts)
 
 
@@ -633,13 +648,33 @@ def discover_license_types(include_unused=0):
 	client = GravityZoneClient(api_key=settings.get_password("api_key"), base_url=settings.base_url)
 	month = date.today().strftime("%m/%Y")
 
+	infos, totals = {}, {}
+	for company in companies:
+		infos[company.name] = client.get_license_info(company.gz_company_id).raw
+		totals[company.name] = client.get_monthly_usage_per_product_type(company.gz_company_id, month)
+
+	# A parent's reported counters include its sub-companies. Show (and count towards
+	# companies_using) only what it holds itself; the sub-companies are listed on their own.
 	usages = []
 	for company in companies:
-		info = client.get_license_info(company.gz_company_id).raw
-		usage = client.get_monthly_usage_per_product_type(company.gz_company_id, month)
-		usages.append(usage)
-		in_use = {field: value for field, value in usage.items() if value}
-		frappe.db.set_value("GravityZone Company", company.name, "licenses_summary", _license_summary(info, in_use))
+		total = totals[company.name]
+		flags = frappe.db.get_value(
+			"GravityZone Company", company.name, "usage_includes_sub_companies"
+		)
+		children = frappe.get_all("GravityZone Company", filters={"parent_company": company.name}, pluck="name")
+		if flags and children:
+			child_usages = [totals[c] for c in children if c in totals]
+			own = _subtract_usage(total, child_usages)
+			sub_total = {}
+			for child_usage in child_usages:
+				for field, value in child_usage.items():
+					sub_total[field] = sub_total.get(field, 0) + value
+			summary = _license_summary(infos[company.name], own, sub_total, len(children))
+		else:
+			own = total
+			summary = _license_summary(infos[company.name], {f: v for f, v in total.items() if v})
+		usages.append(own)
+		frappe.db.set_value("GravityZone Company", company.name, "licenses_summary", summary)
 
 	catalogue = _license_catalogue(usages)
 	created = 0
