@@ -1,0 +1,147 @@
+GravityZone Company,GravityZone-Firma
+GravityZone Company ID,GravityZone-Firmen-ID
+GravityZone Company Name,GravityZone-Firmenname
+ERPNext Customer,ERPNext-Kunde
+Minimum Billable Seats,Mindestens abrechenbare Plätze
+"Floor applied to the synced license count, e.g. for a minimum-commit contract.","Untergrenze für die synchronisierte Lizenzanzahl, z. B. bei einem Vertrag mit Mindestabnahme."
+Sync Status,Sync-Status
+Subscription,Abonnement
+Last Synced License Count,Zuletzt synchronisierte Lizenzanzahl
+Last Synced On,Zuletzt synchronisiert am
+Last Sync Message,Letzte Sync-Meldung
+Needs Review,Prüfung erforderlich
+A synced license-count change exceeded the configured review threshold and was not applied automatically. See Pending License Count and Sync History below.,Eine Änderung der synchronisierten Lizenzanzahl hat die eingestellte Prüfschwelle überschritten und wurde nicht automatisch übernommen. Siehe „Ausstehende Lizenzanzahl“ und Sync-Verlauf unten.
+Pending License Count,Ausstehende Lizenzanzahl
+The synced value awaiting manual approval.,"Der synchronisierte Wert, der auf manuelle Freigabe wartet."
+Sync History,Sync-Verlauf
+Per-Product Licensing,Lizenzen pro Produkt
+"Only used when GravityZone Settings' License Metric is ""Per-Product Monthly Usage"" — one row per mapped GravityZone product, each tracked and reviewed independently.","Wird nur verwendet, wenn die Lizenzmetrik in den GravityZone-Einstellungen „Monatliche Nutzung pro Produkt“ ist – eine Zeile pro zugeordnetem GravityZone-Produkt, jeweils einzeln verfolgt und geprüft."
+Product Lines,Produktzeilen
+Billing Doctype,Abrechnungs-Doctype
+Which doctype the Subscription field below points to.,Auf welchen Doctype das Feld Abonnement unten verweist.
+Simple Subscription,Simple Subscription
+Licenses,Lizenzen
+Parent Company,Muttergesellschaft
+Set by Discover Companies for a sub-company of another GravityZone company.,Wird von „Firmen erkennen“ für eine Unterfirma einer anderen GravityZone-Firma gesetzt.
+Exclude from Sync,Vom Sync ausschließen
+Skip this company in every sync: nothing is read or billed for it. Never set automatically.,Diese Firma bei jedem Sync überspringen: Es wird nichts gelesen oder abgerechnet. Wird nie automatisch gesetzt.
+Usage Includes Sub-Companies,Nutzung enthält Unterfirmen
+"GravityZone adds a sub-company's usage to its parent's counters. Ticked, the sync bills this company only for its own share: its counters minus its direct sub-companies'. Set automatically for a company that has sub-companies; un-tick if its counters turn out not to include them.","GravityZone addiert die Nutzung einer Unterfirma zu den Zählern der Muttergesellschaft. Ist das Häkchen gesetzt, rechnet der Sync diese Firma nur für ihren eigenen Anteil ab: ihre Zähler minus die ihrer direkten Unterfirmen. Wird bei Firmen mit Unterfirmen automatisch gesetzt; Häkchen entfernen, falls die Zähler diese doch nicht enthalten."
+GravityZone Licenses,GravityZone-Lizenzen
+GravityZone Company Product,GravityZone-Firmenprodukt
+Product,Produkt
+GravityZone Usage Field,GravityZone-Nutzungsfeld
+Subscription Plan,Abonnementplan
+Last Synced Qty,Zuletzt synchronisierte Menge
+Pending Qty,Ausstehende Menge
+Item (Simple Subscription),Artikel (Simple Subscription)
+GravityZone Product Mapping,GravityZone-Produktzuordnung
+Product Label,Produktbezeichnung
+"Friendly name shown in sync messages and history, e.g. ""EDR"".","Anzeigename in Sync-Meldungen und im Verlauf, z. B. „EDR“."
+"The counter name from GravityZone's getMonthlyUsagePerProductType response, e.g. endpointMonthlyUsage, edrMonthlyUsage, patchManagementMonthlyUsage, encryptionMonthlyUsage, emailSecurityMonthlyUsage, exchangeMonthlyUsage, atsMonthlyUsage, complianceMonthlyUsage. Verify exact names against a real API response for your tenant before relying on this.","Der Zählername aus der GravityZone-Antwort von getMonthlyUsagePerProductType, z. B. endpointMonthlyUsage, edrMonthlyUsage, patchManagementMonthlyUsage, encryptionMonthlyUsage, emailSecurityMonthlyUsage, exchangeMonthlyUsage, atsMonthlyUsage, complianceMonthlyUsage. Die genauen Namen vor der Nutzung an einer echten API-Antwort deines Mandanten prüfen."
+Required when Billing Backend is ERPNext Subscription.,"Erforderlich, wenn das Abrechnungs-Backend ERPNext Subscription ist."
+Enabled,Aktiviert
+Used instead of Subscription Plan when GravityZone Settings' Billing Backend is ALYF Simple Subscription.,"Wird anstelle des Abonnementplans verwendet, wenn das Abrechnungs-Backend in den GravityZone-Einstellungen ALYF Simple Subscription ist."
+Companies Using,Nutzende Firmen
+How many GravityZone companies had a non-zero value for this counter at the last Discover License Types run. 0 means the counter exists but nobody uses it yet.,"Wie viele GravityZone-Firmen beim letzten Lauf von „Lizenzarten erkennen“ einen Wert über 0 für diesen Zähler hatten. 0 bedeutet: Der Zähler existiert, wird aber noch von niemandem genutzt."
+GravityZone Settings,GravityZone-Einstellungen
+GravityZone Connection,GravityZone-Verbindung
+API Key,API-Schlüssel
+"Control Center &gt; My Account &gt; API keys. The key needs the Network and Licensing APIs (Partner tier) to list companies and read license counts, plus Companies only if new ERPNext Customers should get address/contact data from GravityZone.","Control Center &gt; Mein Konto &gt; API-Schlüssel. Der Schlüssel braucht die APIs Netzwerk und Lizenzierung (Partner-Stufe), um Firmen aufzulisten und Lizenzanzahlen zu lesen – Unternehmen nur, wenn neue ERPNext-Kunden Adress- und Kontaktdaten aus GravityZone erhalten sollen."
+API Base URL,API-Basis-URL
+"The Access URL shown next to the API keys in Control Center, plus /v1.0/jsonrpc. Cloud tenants: https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc; on-prem installs use their own hostname. A valid key sent to the wrong host is answered with ""Invalid API key"".","Die Zugriffs-URL, die im Control Center neben den API-Schlüsseln steht, plus /v1.0/jsonrpc. Cloud-Mandanten: https://cloudgz.gravityzone.bitdefender.com/api/v1.0/jsonrpc; On-Premises-Installationen verwenden ihren eigenen Hostnamen. Ein gültiger Schlüssel an den falschen Host wird mit „Invalid API key“ beantwortet."
+License Metric,Lizenzmetrik
+"License Info = current allocated seats. Monthly Usage = actual monthly consumption (both bill as one flat line via the Subscription Plan below). Per-Product Monthly Usage bills each GravityZone product as its own line, per the GravityZone Product Mapping list — see the Per-Product Licensing section on each GravityZone Company.",Lizenzinfo = aktuell zugewiesene Plätze. Monatliche Nutzung = tatsächlicher Monatsverbrauch (beide rechnen als eine Pauschalzeile über den Abonnementplan unten ab). Monatliche Nutzung pro Produkt rechnet jedes GravityZone-Produkt als eigene Zeile gemäß der GravityZone-Produktzuordnung ab – siehe den Abschnitt „Lizenzen pro Produkt“ in jeder GravityZone-Firma.
+License Info,Lizenzinfo
+Monthly Usage,Monatliche Nutzung
+Per-Product Monthly Usage,Monatliche Nutzung pro Produkt
+Enable Daily Scheduled Sync,Täglichen geplanten Sync aktivieren
+Billing Defaults,Abrechnungsvorgaben
+Default Company,Standardunternehmen
+Used when creating a new Subscription for a customer that doesn't have one yet.,"Wird verwendet, wenn für einen Kunden ohne Abonnement ein neues angelegt wird."
+Required for the License Info / Monthly Usage metrics (one flat line for all seats). Ignored when License Metric is Per-Product Monthly Usage — configure GravityZone Product Mapping instead.,"Erforderlich für die Metriken Lizenzinfo / Monatliche Nutzung (eine Pauschalzeile für alle Plätze). Wird ignoriert, wenn die Lizenzmetrik „Monatliche Nutzung pro Produkt“ ist – stattdessen die GravityZone-Produktzuordnung einrichten."
+Automatic Review Thresholds,Automatische Prüfschwellen
+Flag Changes Over (%),Änderungen markieren ab (%)
+A synced license-count change is held for manual review instead of applied automatically when it exceeds BOTH this percentage and the seat count below.,"Eine Änderung der synchronisierten Lizenzanzahl wird zur manuellen Prüfung angehalten statt automatisch übernommen, wenn sie SOWOHL diesen Prozentsatz ALS AUCH die Platzanzahl unten überschreitet."
+Flag Changes Over (seats),Änderungen markieren ab (Plätze)
+Billing Backend,Abrechnungs-Backend
+"Which recurring-billing doctype to drive. ERPNext Subscription is core ERPNext's own doctype (uses Subscription Plan, above / on each Product Mapping row). ALYF Simple Subscription (github.com/alyf-de/simple_subscription) has no Plan concept — it bills an Item directly — so fill in the Item field(s) instead when this is selected. Switching backends for an already-onboarded customer creates a new document under the new backend; the old one is left as-is for you to cancel.","Welcher Doctype für die wiederkehrende Abrechnung gesteuert wird. ERPNext Subscription ist der Standard-Doctype von ERPNext (verwendet den Abonnementplan, oben bzw. in jeder Produktzuordnungszeile). ALYF Simple Subscription (github.com/alyf-de/simple_subscription) kennt keine Pläne, sondern rechnet einen Artikel direkt ab – bei dieser Auswahl stattdessen die Artikelfelder ausfüllen. Ein Wechsel des Backends bei einem bereits angelegten Kunden erzeugt ein neues Dokument im neuen Backend; das alte bleibt unverändert und muss von dir gekündigt werden."
+ERPNext Subscription,ERPNext Subscription
+ALYF Simple Subscription,ALYF Simple Subscription
+Used instead of Subscription Plan for License Info / Monthly Usage billing when Billing Backend is ALYF Simple Subscription.,"Wird bei der Abrechnung nach Lizenzinfo / Monatlicher Nutzung anstelle des Abonnementplans verwendet, wenn das Abrechnungs-Backend ALYF Simple Subscription ist."
+Frequency,Häufigkeit
+Used when creating a new Simple Subscription for a customer that doesn't have one yet.,"Wird verwendet, wenn für einen Kunden ohne Simple Subscription eine neue angelegt wird."
+Monthly,Monatlich
+Quarterly,Vierteljährlich
+Halfyearly,Halbjährlich
+Yearly,Jährlich
+Biennial,Alle zwei Jahre
+Triennial,Alle drei Jahre
+Billing Period Is Based On,Abrechnungszeitraum basiert auf
+calendar months,Kalendermonaten
+start date,Startdatum
+Billing Time,Abrechnungszeitpunkt
+at beginning of period,zu Beginn des Zeitraums
+after end of period,nach Ende des Zeitraums
+GravityZone Sync History,GravityZone-Sync-Verlauf
+Timestamp,Zeitstempel
+Previous Qty,Vorherige Menge
+New Qty,Neue Menge
+Outcome,Ergebnis
+Created,Angelegt
+Updated,Aktualisiert
+Unchanged,Unverändert
+Flagged for Review,Zur Prüfung markiert
+Approved,Freigegeben
+Message,Meldung
+Blank for a flat-plan sync; the product label for a per-product sync.,Leer bei einem Sync mit Pauschalplan; bei einem Sync pro Produkt die Produktbezeichnung.
+"Created {0}, linked {1} existing Customer(s), skipped {2}.","{0} angelegt, {1} vorhandene(n) Kunden verknüpft, {2} übersprungen."
+Imported {0} address(es) and {1} contact(s) from GravityZone.,{0} Adresse(n) und {1} Kontakt(e) aus GravityZone importiert.
+Create ERPNext Customer,ERPNext-Kunde erstellen
+Creating Customer...,Kunde wird angelegt...
+"{0} is already linked to the ERPNext Customer {1}. Link it to a Customer named after the GravityZone company instead? An existing Customer with exactly that name is reused, otherwise a new one is created. The old Customer is not changed or deleted.","{0} ist bereits mit dem ERPNext-Kunden {1} verknüpft. Stattdessen mit einem Kunden verknüpfen, der nach der GravityZone-Firma benannt ist? Ein vorhandener Kunde mit genau diesem Namen wird wiederverwendet, sonst wird ein neuer angelegt. Der alte Kunde wird weder geändert noch gelöscht."
+"The billing document {0} belongs to the old Customer: it stays there and is no longer updated. The next sync creates a new one for the new Customer, and you'd cancel the old one yourself.","Das Abrechnungsdokument {0} gehört zum alten Kunden: Es bleibt dort und wird nicht mehr aktualisiert. Der nächste Sync legt ein neues für den neuen Kunden an, das alte musst du selbst kündigen."
+{0} product(s) exceed the review threshold and were not applied: {1}. Review and approve below.,{0} Produkt(e) überschreiten die Prüfschwelle und wurden nicht übernommen: {1}. Unten prüfen und freigeben.
+Synced license count of {0} exceeds the review threshold and was not applied. Review and approve below.,Die synchronisierte Lizenzanzahl von {0} überschreitet die Prüfschwelle und wurde nicht übernommen. Unten prüfen und freigeben.
+Approve Pending Change(s),Ausstehende Änderung(en) freigeben
+Apply all pending changes shown above to this customer's Subscription?,Alle oben gezeigten ausstehenden Änderungen auf das Abonnement dieses Kunden anwenden?
+Applying...,Wird angewendet...
+Nothing to do: every GravityZone Company already has an ERPNext Customer or is excluded from sync.,Nichts zu tun: Jede GravityZone-Firma hat bereits einen ERPNext-Kunden oder ist vom Sync ausgeschlossen.
+"Created {0}, linked {1} existing Customer(s) with the same name, skipped {2} that already had one.","{0} angelegt, {1} vorhandene(n) Kunden mit gleichem Namen verknüpft, {2} übersprungen, die schon einen hatten."
+ERPNext Customers,ERPNext-Kunden
+Create ERPNext Customers,ERPNext-Kunden erstellen
+Create an ERPNext Customer for every GravityZone Company that doesn't have one yet? Companies excluded from sync are skipped.,Für jede GravityZone-Firma ohne ERPNext-Kunden einen anlegen? Vom Sync ausgeschlossene Firmen werden übersprungen.
+Creating Customers...,Kunden werden angelegt...
+Select at least one GravityZone Company first.,Wähle zuerst mindestens eine GravityZone-Firma aus.
+Discover Companies,Firmen erkennen
+Fetching companies from GravityZone...,Firmen werden aus GravityZone abgerufen...
+"Created {0} and updated {1} GravityZone Company record(s), {2} of them sub-companies.","{0} GravityZone-Firmen angelegt und {1} aktualisiert, davon {2} Unterfirmen."
+"{0} company(ies) with sub-companies were marked 'Usage Includes Sub-Companies': GravityZone adds a sub-company's usage to its parent's counters, so the parent is billed only for its own share (its counters minus its sub-companies'). Un-tick it on the record if that's not the case.","{0} Firma(en) mit Unterfirmen wurden mit „Nutzung enthält Unterfirmen“ markiert: GravityZone addiert die Nutzung einer Unterfirma zu den Zählern der Muttergesellschaft, daher wird die Muttergesellschaft nur für ihren eigenen Anteil abgerechnet (ihre Zähler minus die der Unterfirmen). Im Datensatz abwählen, falls das nicht zutrifft."
+Create Missing ERPNext Customers,Fehlende ERPNext-Kunden erstellen
+"Created {0} ERPNext Customer(s), linked {1} existing one(s) with the same name.","{0} ERPNext-Kunde(n) angelegt, {1} vorhandene(n) mit gleichem Namen verknüpft."
+Discover License Types,Lizenzarten erkennen
+Also add license types nobody uses yet,"Auch Lizenzarten hinzufügen, die noch niemand nutzt"
+"Adds every license type GravityZone knows (the full catalogue, about 30 more) as disabled rows, so all of them can be assigned in advance. Un-tick to add only the ones in use.","Fügt jede Lizenzart, die GravityZone kennt (der komplette Katalog, etwa 30 mehr), als deaktivierte Zeilen hinzu, damit alle im Voraus zugeordnet werden können. Abwählen, um nur die genutzten hinzuzufügen."
+Reading licenses from GravityZone...,Lizenzen werden aus GravityZone gelesen...
+GravityZone License Types,GravityZone-Lizenzarten
+"Read {0} companies. GravityZone knows {1} license type(s), {2} of them in use. Created {3} new Product Mapping row(s) (all disabled).","{0} Firmen gelesen. GravityZone kennt {1} Lizenzart(en), davon {2} in Benutzung. {3} neue Produktzuordnungszeile(n) angelegt (alle deaktiviert)."
+"Open the Product Mapping list (sort by Companies Using), pick the ERPNext Subscription Plan / Item for each type you bill, then enable it. Note that Endpoint Security and the MSP package counters count the same seats — enable only the ones you actually invoice, or each seat is billed twice.","Öffne die Produktzuordnungsliste (nach „Nutzende Firmen“ sortieren), wähle für jede abgerechnete Art den ERPNext-Abonnementplan bzw. Artikel und aktiviere sie. Beachte: Endpoint Security und die MSP-Paketzähler zählen dieselben Plätze – aktiviere nur, was du tatsächlich in Rechnung stellst, sonst wird jeder Platz doppelt abgerechnet."
+Read licenses,Lizenzen lesen
+Sync Licenses Now,Lizenzen jetzt synchronisieren
+Syncing license counts...,Lizenzanzahlen werden synchronisiert...
+"Synced {0}, skipped {1}, failed {2}.","{0} synchronisiert, {1} übersprungen, {2} fehlgeschlagen."
+Skipped companies have no ERPNext Customer assigned yet or are excluded from sync.,Übersprungene Firmen haben noch keinen ERPNext-Kunden zugewiesen oder sind vom Sync ausgeschlossen.
+See Error Log for the failures.,Die Fehler stehen im Fehlerprotokoll.
+GravityZone Sync,GravityZone-Sync
+Manage Product Mappings,Produktzuordnungen verwalten
+Trial,Testversion
+Licensed,Lizenziert
+Monthly license trial,Monatliche Lizenz-Testversion
+Monthly subscription trial,Monatliches Abo (Testversion)
+Not read yet. Run Discover License Types in GravityZone Settings.,Noch nicht gelesen. „Lizenzarten erkennen“ in den GravityZone-Einstellungen ausführen.
+Model,Modell
+Additional products,Zusatzprodukte
+Own licenses,Eigene Lizenzen
+none,keine
+Sub-companies ({0}),Unterfirmen ({0})
+no licenses,keine Lizenzen

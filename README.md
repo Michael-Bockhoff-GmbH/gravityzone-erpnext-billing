@@ -356,3 +356,7 @@ app — run the module path above to test this app in isolation.
 ## License
 
 mit
+
+## Language
+
+The UI texts (field labels, buttons, messages) and each company's license overview follow the user's language. German translations are in `gravityzone_billing/translations/de.csv`; the license overview is stored as data (`licenses_data`) and rendered in the form. Server-side error messages (e.g. in the Error Log and sync messages) are English only.

@@ -556,15 +556,8 @@ def discover_companies():
 	}
 
 
-# Meanings per Bitdefender's getLicenseInfo documentation.
-SUBSCRIPTION_TYPES = {
-	1: "Testversion",
-	2: "Lizenziert",
-	3: "Monatlich",
-	4: "Monatliche Lizenz-Testversion",
-	5: "Monatliches Abo (Testversion)",
-	6: "FRAT",
-}
+# ``subscriptionType`` codes (1 trial, 2 licensed, 3 monthly, 4 monthly license trial,
+# 5 monthly subscription trial, 6 FRAT) are stored as-is and named, translated, in the form's JS.
 PRODUCT_TYPES = {0: "Endpoint Security", 3: "EDR", 5: "PHASR"}
 _ACRONYMS = {"msp", "edr", "ats", "ai", "spm", "easm", "sve", "vdi", "vs", "xdr", "mdr", "phasr"}
 
@@ -580,41 +573,31 @@ def _counter_label(field: str) -> str:
 	return " ".join(w.upper() if w.lower() in _ACRONYMS else w[:1].upper() + w[1:] for w in words)
 
 
-def _counter_lines(usage: dict, indent: str = "    ") -> list:
-	return [f"{indent}• {_counter_label(f)}: {v}" for f, v in sorted(usage.items()) if v]
+def _non_zero_labelled(usage: dict) -> dict:
+	return {_counter_label(f): v for f, v in sorted(usage.items()) if v}
 
 
-def _license_summary(info: dict, usage: dict, sub_companies: list = None) -> str:
-	"""What a company holds, one fact per line: protection model, subscription type,
-	any additional product types, and this month's non-zero counters.
+def _license_data(info: dict, usage: dict, sub_companies: list = None) -> dict:
+	"""What a company holds, as plain data the form renders in the viewer's language:
+	protection model, subscription type code, additional product types and this
+	month's non-zero counters by product name.
 
 	For a parent whose reported counters include its sub-companies, ``usage`` is its
-	*own* share and ``sub_companies`` a list of ``(name, usage)`` pairs; the licenses
-	are then grouped under each sub-company, so it's clear who holds what instead of
-	showing the sum under the parent's name.
+	*own* share and ``sub_companies`` a list of ``(name, usage)`` pairs; those are kept
+	per sub-company so the licenses can be shown grouped under each one.
 	"""
-	subscription = SUBSCRIPTION_TYPES.get(info.get("subscriptionType"), info.get("subscriptionType"))
-	lines = [f"Modell: {info.get('assignedProtectionModel') or 'n/a'}", f"Abonnement: {subscription}"]
-
-	extra = [PRODUCT_TYPES.get(t, str(t)) for t in info.get("additionalProductTypes") or []]
-	if extra:
-		lines.append("Zusatzprodukte: " + ", ".join(extra))
-
-	if sub_companies is None:
-		own = _counter_lines(usage)
-		if own:
-			lines.append("Lizenzen:")
-			lines.extend(own)
-		return "\n".join(lines)
-
-	lines.append("Eigene Lizenzen:")
-	lines.extend(_counter_lines(usage) or ["    keine"])
-	lines.append("")
-	lines.append(f"Unterfirmen ({len(sub_companies)}):")
-	for name, child_usage in sorted(sub_companies):
-		lines.append(f"  {name}")
-		lines.extend(_counter_lines(child_usage, indent="      ") or ["      keine Lizenzen"])
-	return "\n".join(lines)
+	data = {
+		"model": info.get("assignedProtectionModel"),
+		"subscription": info.get("subscriptionType"),
+		"additional": [PRODUCT_TYPES.get(t, str(t)) for t in info.get("additionalProductTypes") or []],
+		"licenses": _non_zero_labelled(usage),
+		"sub_companies": None,
+	}
+	if sub_companies is not None:
+		data["sub_companies"] = [
+			{"name": name, "licenses": _non_zero_labelled(child_usage)} for name, child_usage in sorted(sub_companies)
+		]
+	return data
 
 
 def _license_catalogue(usages: list) -> dict:
@@ -633,7 +616,7 @@ def _license_catalogue(usages: list) -> dict:
 @frappe.whitelist()
 def discover_license_types(include_unused=0):
 	"""Read every GravityZone Company's license model and this month's usage
-	counters, write a readable summary onto each company, and create a
+	counters, store each company's licenses (rendered on the form), and create a
 	(disabled, still unassigned) GravityZone Product Mapping row per counter —
 	so each license type only needs an ERPNext Item / Subscription Plan picked
 	and enabling.
@@ -678,12 +661,12 @@ def discover_license_types(include_unused=0):
 				for c in children
 				if c in totals
 			]
-			summary = _license_summary(infos[company.name], own, sub_companies)
+			data = _license_data(infos[company.name], own, sub_companies)
 		else:
 			own = total
-			summary = _license_summary(infos[company.name], {f: v for f, v in total.items() if v})
+			data = _license_data(infos[company.name], own)
 		usages.append(own)
-		frappe.db.set_value("GravityZone Company", company.name, "licenses_summary", summary)
+		frappe.db.set_value("GravityZone Company", company.name, "licenses_data", json.dumps(data))
 
 	catalogue = _license_catalogue(usages)
 	created = 0

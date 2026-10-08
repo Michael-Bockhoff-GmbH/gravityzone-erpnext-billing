@@ -13,8 +13,71 @@ function customer_result_message(result) {
 	return message;
 }
 
+// A function, so the names are translated when used, not when this file loads.
+function subscription_type_name(code) {
+	const names = {
+		1: __("Trial"),
+		2: __("Licensed"),
+		3: __("Monthly"),
+		4: __("Monthly license trial"),
+		5: __("Monthly subscription trial"),
+		6: "FRAT",
+	};
+	return names[code] || code;
+}
+
+function license_list(licenses, empty_text) {
+	const esc = frappe.utils.escape_html;
+	const entries = Object.entries(licenses || {});
+	if (!entries.length) {
+		return `<div class="text-muted">${empty_text}</div>`;
+	}
+	return "<ul>" + entries.map(([name, qty]) => `<li>${esc(name)}: <b>${qty}</b></li>`).join("") + "</ul>";
+}
+
+// Rendered here from the stored data (not a stored sentence), so it follows the user's language.
+function render_licenses(frm) {
+	const field = frm.fields_dict.licenses_summary;
+	if (!field) {
+		return;
+	}
+	let data = null;
+	try {
+		data = JSON.parse(frm.doc.licenses_data || "");
+	} catch (e) {
+		data = null;
+	}
+	if (!data) {
+		field.$wrapper.html(
+			`<div class="text-muted">${__("Not read yet. Run Discover License Types in GravityZone Settings.")}</div>`
+		);
+		return;
+	}
+
+	const esc = frappe.utils.escape_html;
+	const row = (label, value) => `<div>${label}: <b>${esc(String(value))}</b></div>`;
+	let html = row(__("Model"), data.model || "n/a");
+	const subscription = subscription_type_name(data.subscription);
+	html += row(__("Subscription"), subscription == null ? "n/a" : subscription);
+	if ((data.additional || []).length) {
+		html += row(__("Additional products"), data.additional.join(", "));
+	}
+
+	if (data.sub_companies) {
+		html += `<div class="mt-3"><b>${__("Own licenses")}</b></div>` + license_list(data.licenses, __("none"));
+		html += `<div class="mt-3"><b>${__("Sub-companies ({0})", [data.sub_companies.length])}</b></div>`;
+		html += data.sub_companies
+			.map((sub) => `<div class="mt-2">${esc(sub.name)}</div>` + license_list(sub.licenses, __("no licenses")))
+			.join("");
+	} else {
+		html += `<div class="mt-3"><b>${__("Licenses")}</b></div>` + license_list(data.licenses, __("none"));
+	}
+	field.$wrapper.html(html);
+}
+
 frappe.ui.form.on("GravityZone Company", {
 	refresh(frm) {
+		render_licenses(frm);
 		if (!frm.is_new()) {
 			// Always available. With a Customer already linked it asks first, so a wrong click
 			// on a correctly linked company can't silently re-link it.

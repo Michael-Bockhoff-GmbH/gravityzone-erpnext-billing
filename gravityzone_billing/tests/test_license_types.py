@@ -3,7 +3,7 @@
 
 import unittest
 
-from gravityzone_billing.sync import _counter_label, _license_catalogue, _license_summary
+from gravityzone_billing.sync import _counter_label, _license_catalogue, _license_data
 
 
 class TestCounterLabel(unittest.TestCase):
@@ -25,31 +25,31 @@ class TestCounterLabel(unittest.TestCase):
 		self.assertEqual(_counter_label("integrityMonitoringUsage"), "Integrity Monitoring")
 
 
-class TestLicenseSummary(unittest.TestCase):
+class TestLicenseData(unittest.TestCase):
 	def test_monthly_company_with_one_package(self):
 		info = {"assignedProtectionModel": "mspSecurePlus", "subscriptionType": 3, "additionalProductTypes": []}
-		usage = {"endpointMonthlyUsage": 13, "mspSecurePlusMonthlyUsage": 13}
+		usage = {"endpointMonthlyUsage": 13, "mspSecurePlusMonthlyUsage": 13, "edrMonthlyUsage": 0}
 
 		self.assertEqual(
-			_license_summary(info, usage),
-			"Modell: mspSecurePlus\nAbonnement: Monatlich\nLizenzen:\n    • Endpoint Security: 13\n    • MSP Secure Plus: 13",
+			_license_data(info, usage),
+			{
+				"model": "mspSecurePlus",
+				"subscription": 3,
+				"additional": [],
+				"licenses": {"Endpoint Security": 13, "MSP Secure Plus": 13},
+				"sub_companies": None,
+			},
 		)
 
-	def test_mixed_package_company_shows_every_counter_and_additional_products(self):
-		info = {"assignedProtectionModel": "mspSecure", "subscriptionType": 3, "additionalProductTypes": [0]}
-		usage = {"endpointMonthlyUsage": 2, "aLaCarteMonthlyUsage": 1, "mspSecurePlusMonthlyUsage": 1}
+	def test_additional_products_are_named(self):
+		data = _license_data({"subscriptionType": 3, "additionalProductTypes": [0, 3]}, {})
 
-		summary = _license_summary(info, usage)
+		self.assertEqual(data["additional"], ["Endpoint Security", "EDR"])
 
-		self.assertIn("Modell: mspSecure", summary)
-		self.assertIn("Zusatzprodukte: Endpoint Security", summary)
-		self.assertIn("A La Carte: 1", summary)
-		self.assertIn("MSP Secure Plus: 1", summary)
+	def test_missing_fields_do_not_crash(self):
+		data = _license_data({}, {})
 
-	def test_unknown_subscription_type_and_no_usage_do_not_crash(self):
-		summary = _license_summary({"subscriptionType": 99}, {})
-
-		self.assertEqual(summary, "Modell: n/a\nAbonnement: 99")
+		self.assertEqual((data["model"], data["subscription"], data["licenses"]), (None, None, {}))
 
 
 class TestLicenseCatalogue(unittest.TestCase):
@@ -73,28 +73,29 @@ class TestLicenseCatalogue(unittest.TestCase):
 		self.assertEqual(_license_catalogue([]), {})
 
 
-class TestParentLicenseSummary(unittest.TestCase):
-	def test_licenses_are_grouped_under_each_sub_company(self):
-		info = {"assignedProtectionModel": "mspSecure", "subscriptionType": 3}
+class TestParentLicenseData(unittest.TestCase):
+	def test_licenses_are_kept_per_sub_company_sorted_by_name(self):
 		subs = [
 			("Zweite GmbH", {"endpointMonthlyUsage": 1, "aLaCarteMonthlyUsage": 1}),
-			("Erste GmbH", {"endpointMonthlyUsage": 1, "mspSecurePlusMonthlyUsage": 1}),
+			("Erste GmbH", {"endpointMonthlyUsage": 1, "mspSecurePlusMonthlyUsage": 1, "edrMonthlyUsage": 0}),
 		]
 
-		summary = _license_summary(info, {}, subs)
+		data = _license_data({"assignedProtectionModel": "mspSecure"}, {}, subs)
 
-		self.assertIn("Eigene Lizenzen:\n    keine\n", summary)
-		self.assertIn("Unterfirmen (2):", summary)
-		self.assertIn("  Erste GmbH\n      • Endpoint Security: 1\n      • MSP Secure Plus: 1", summary)
-		self.assertIn("  Zweite GmbH\n      • A La Carte: 1\n      • Endpoint Security: 1", summary)
-		# alphabetical, and each company's licenses come right after its name
-		self.assertLess(summary.index("Erste GmbH"), summary.index("Zweite GmbH"))
+		self.assertEqual(data["licenses"], {})
+		self.assertEqual(
+			data["sub_companies"],
+			[
+				{"name": "Erste GmbH", "licenses": {"Endpoint Security": 1, "MSP Secure Plus": 1}},
+				{"name": "Zweite GmbH", "licenses": {"A La Carte": 1, "Endpoint Security": 1}},
+			],
+		)
 
-	def test_parent_with_own_licenses(self):
-		summary = _license_summary({}, {"endpointMonthlyUsage": 3}, [("Kind GmbH", {})])
+	def test_parent_with_own_licenses_and_an_idle_sub_company(self):
+		data = _license_data({}, {"endpointMonthlyUsage": 3}, [("Kind GmbH", {})])
 
-		self.assertIn("Eigene Lizenzen:\n    • Endpoint Security: 3", summary)
-		self.assertIn("  Kind GmbH\n      keine Lizenzen", summary)
+		self.assertEqual(data["licenses"], {"Endpoint Security": 3})
+		self.assertEqual(data["sub_companies"], [{"name": "Kind GmbH", "licenses": {}}])
 
-	def test_plain_company_unchanged(self):
-		self.assertNotIn("Eigene Lizenzen", _license_summary({}, {"endpointMonthlyUsage": 1}))
+	def test_plain_company_has_no_sub_company_block(self):
+		self.assertIsNone(_license_data({}, {"endpointMonthlyUsage": 1})["sub_companies"])

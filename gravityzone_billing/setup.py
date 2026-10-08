@@ -28,6 +28,7 @@ def after_install():
 	refresh_settings_defaults_and_help()
 	add_companies_using_to_product_mapping()
 	move_licenses_summary_above_sync_status()
+	store_licenses_as_data()
 
 
 def create_gravityzone_settings():
@@ -990,3 +991,31 @@ def move_licenses_summary_above_sync_status():
 		position + 1,
 	)
 	doc.save(ignore_permissions=True)
+
+
+def store_licenses_as_data():
+	"""Keep a company's licenses as JSON (``licenses_data``) and render them in the form's
+	JS, so the text follows the viewer's language. ``licenses_summary`` becomes the HTML
+	field that shows them; the old stored English/German text is dropped.
+	"""
+	doc = frappe.get_doc("DocType", "GravityZone Company")
+	by_name = {f.fieldname: f for f in doc.fields}
+	changed = False
+
+	if "licenses_data" not in by_name:
+		position = next(i for i, f in enumerate(doc.fields) if f.fieldname == "licenses_summary")
+		doc.append(
+			"fields",
+			{"fieldname": "licenses_data", "fieldtype": "Long Text", "label": "Licenses Data", "hidden": 1, "read_only": 1},
+			position + 1,
+		)
+		changed = True
+
+	summary = by_name.get("licenses_summary")
+	if summary and summary.fieldtype != "HTML":
+		summary.fieldtype = "HTML"
+		summary.description = None
+		changed = True
+
+	if changed:
+		doc.save(ignore_permissions=True)
