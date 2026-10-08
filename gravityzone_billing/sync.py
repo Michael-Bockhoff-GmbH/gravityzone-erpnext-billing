@@ -208,6 +208,22 @@ def _subtract_usage(total: dict, children: list) -> dict:
 	}
 
 
+def _without_overlapping_endpoint(usages: dict) -> dict:
+	"""Endpoint Security isn't billed on top of an MSP Secure package: the package
+	counters (mspSecure, mspSecurePlus, mspSecureExtra, ...) cover the same seats
+	as ``endpointMonthlyUsage``. A company with any MSP package seat therefore bills
+	0 for Endpoint Security.
+	"""
+	has_package = any(
+		value > 0
+		for field, value in usages.items()
+		if field.startswith("mspSecure") and field.endswith("MonthlyUsage")
+	)
+	if has_package and usages.get("endpointMonthlyUsage"):
+		return {**usages, "endpointMonthlyUsage": 0}
+	return usages
+
+
 def _existing_billing_doc(backend, company):
 	"""The company's current billing document, if it exists and belongs to
 	the currently active backend. A company left over from a different
@@ -246,6 +262,7 @@ def _sync_company_per_product(client: GravityZoneClient, settings, company):
 			for child in _child_companies(client, company.gz_company_id)
 		]
 		usages = _subtract_usage(usages, children)
+	usages = _without_overlapping_endpoint(usages)
 
 	doc = _existing_billing_doc(backend, company)
 

@@ -267,6 +267,13 @@ one flat per-seat line.
      > (`mspSecure…`, `aLaCarte…`) and **not** `endpointMonthlyUsage` as well,
      > or each seat is invoiced once per counter. Compare a customer's
      > counters in Control Center before choosing.
+     >
+     > The sync enforces this for Per-Product mode: if a company has any seat
+     > on an `mspSecure…` package counter (Essentials, Secure, Plus, Extra),
+     > its `endpointMonthlyUsage` bills as 0, even when the Endpoint Security
+     > mapping row is enabled. Companies without a package (e.g. only
+     > `aLaCarte…`) keep their Endpoint Security count, so don't enable
+     > both that row and `aLaCarte…` for the same customers.
    - **Subscription Plan** or **Item** — whichever matches GravityZone
      Settings' Billing Backend.
    - **Enabled** — unchecked rows are skipped by the sync.
