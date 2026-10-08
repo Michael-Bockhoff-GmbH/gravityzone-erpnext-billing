@@ -558,11 +558,11 @@ def discover_companies():
 
 # Meanings per Bitdefender's getLicenseInfo documentation.
 SUBSCRIPTION_TYPES = {
-	1: "Trial",
-	2: "Licensed",
-	3: "Monthly",
-	4: "Monthly license trial",
-	5: "Monthly subscription trial",
+	1: "Testversion",
+	2: "Lizenziert",
+	3: "Monatlich",
+	4: "Monatliche Lizenz-Testversion",
+	5: "Monatliches Abo (Testversion)",
 	6: "FRAT",
 }
 PRODUCT_TYPES = {0: "Endpoint Security", 3: "EDR", 5: "PHASR"}
@@ -580,36 +580,40 @@ def _counter_label(field: str) -> str:
 	return " ".join(w.upper() if w.lower() in _ACRONYMS else w[:1].upper() + w[1:] for w in words)
 
 
-def _counter_lines(usage: dict) -> list:
-	return [f"    • {_counter_label(f)}: {v}" for f, v in sorted(usage.items()) if v]
+def _counter_lines(usage: dict, indent: str = "    ") -> list:
+	return [f"{indent}• {_counter_label(f)}: {v}" for f, v in sorted(usage.items()) if v]
 
 
-def _license_summary(info: dict, usage: dict, sub_company_total: dict = None, sub_company_count: int = 0) -> str:
+def _license_summary(info: dict, usage: dict, sub_companies: list = None) -> str:
 	"""What a company holds, one fact per line: protection model, subscription type,
 	any additional product types, and this month's non-zero counters.
 
-	For a parent whose reported counters include its sub-companies, ``usage`` is
-	its *own* share and ``sub_company_total`` the sub-companies' combined counters,
-	so the text says who actually holds the licenses instead of showing the sum
-	under the parent's name.
+	For a parent whose reported counters include its sub-companies, ``usage`` is its
+	*own* share and ``sub_companies`` a list of ``(name, usage)`` pairs; the licenses
+	are then grouped under each sub-company, so it's clear who holds what instead of
+	showing the sum under the parent's name.
 	"""
 	subscription = SUBSCRIPTION_TYPES.get(info.get("subscriptionType"), info.get("subscriptionType"))
-	lines = [f"Model: {info.get('assignedProtectionModel') or 'n/a'}", f"Subscription: {subscription}"]
+	lines = [f"Modell: {info.get('assignedProtectionModel') or 'n/a'}", f"Abonnement: {subscription}"]
 
 	extra = [PRODUCT_TYPES.get(t, str(t)) for t in info.get("additionalProductTypes") or []]
 	if extra:
-		lines.append("Additional products: " + ", ".join(extra))
+		lines.append("Zusatzprodukte: " + ", ".join(extra))
 
-	def block(title, counters, empty):
-		lines.append(title)
-		lines.extend(_counter_lines(counters) or [f"    {empty}"])
+	if sub_companies is None:
+		own = _counter_lines(usage)
+		if own:
+			lines.append("Lizenzen:")
+			lines.extend(own)
+		return "\n".join(lines)
 
-	if sub_company_total is None:
-		if _counter_lines(usage):
-			block("Usage:", usage, "")
-	else:
-		block("Own usage:", usage, "none")
-		block(f"Sub-companies ({sub_company_count}), combined:", sub_company_total, "no usage")
+	lines.append("Eigene Lizenzen:")
+	lines.extend(_counter_lines(usage) or ["    keine"])
+	lines.append("")
+	lines.append(f"Unterfirmen ({len(sub_companies)}):")
+	for name, child_usage in sorted(sub_companies):
+		lines.append(f"  {name}")
+		lines.extend(_counter_lines(child_usage, indent="      ") or ["      keine Lizenzen"])
 	return "\n".join(lines)
 
 
@@ -666,11 +670,15 @@ def discover_license_types(include_unused=0):
 		if flags and children:
 			child_usages = [totals[c] for c in children if c in totals]
 			own = _subtract_usage(total, child_usages)
-			sub_total = {}
-			for child_usage in child_usages:
-				for field, value in child_usage.items():
-					sub_total[field] = sub_total.get(field, 0) + value
-			summary = _license_summary(infos[company.name], own, sub_total, len(children))
+			sub_companies = [
+				(
+					frappe.db.get_value("GravityZone Company", c, "gz_company_name") or c,
+					{f: v for f, v in totals[c].items() if v},
+				)
+				for c in children
+				if c in totals
+			]
+			summary = _license_summary(infos[company.name], own, sub_companies)
 		else:
 			own = total
 			summary = _license_summary(infos[company.name], {f: v for f, v in total.items() if v})

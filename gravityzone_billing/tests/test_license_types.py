@@ -32,7 +32,7 @@ class TestLicenseSummary(unittest.TestCase):
 
 		self.assertEqual(
 			_license_summary(info, usage),
-			"Model: mspSecurePlus\nSubscription: Monthly\nUsage:\n    • Endpoint Security: 13\n    • MSP Secure Plus: 13",
+			"Modell: mspSecurePlus\nAbonnement: Monatlich\nLizenzen:\n    • Endpoint Security: 13\n    • MSP Secure Plus: 13",
 		)
 
 	def test_mixed_package_company_shows_every_counter_and_additional_products(self):
@@ -41,15 +41,15 @@ class TestLicenseSummary(unittest.TestCase):
 
 		summary = _license_summary(info, usage)
 
-		self.assertIn("Model: mspSecure", summary)
-		self.assertIn("Additional products: Endpoint Security", summary)
+		self.assertIn("Modell: mspSecure", summary)
+		self.assertIn("Zusatzprodukte: Endpoint Security", summary)
 		self.assertIn("A La Carte: 1", summary)
 		self.assertIn("MSP Secure Plus: 1", summary)
 
 	def test_unknown_subscription_type_and_no_usage_do_not_crash(self):
 		summary = _license_summary({"subscriptionType": 99}, {})
 
-		self.assertEqual(summary, "Model: n/a\nSubscription: 99")
+		self.assertEqual(summary, "Modell: n/a\nAbonnement: 99")
 
 
 class TestLicenseCatalogue(unittest.TestCase):
@@ -74,21 +74,27 @@ class TestLicenseCatalogue(unittest.TestCase):
 
 
 class TestParentLicenseSummary(unittest.TestCase):
-	def test_parent_shows_own_usage_and_sub_companies_separately(self):
+	def test_licenses_are_grouped_under_each_sub_company(self):
 		info = {"assignedProtectionModel": "mspSecure", "subscriptionType": 3}
+		subs = [
+			("Zweite GmbH", {"endpointMonthlyUsage": 1, "aLaCarteMonthlyUsage": 1}),
+			("Erste GmbH", {"endpointMonthlyUsage": 1, "mspSecurePlusMonthlyUsage": 1}),
+		]
 
-		summary = _license_summary(
-			info, {}, sub_company_total={"endpointMonthlyUsage": 2, "mspSecurePlusMonthlyUsage": 1}, sub_company_count=2
-		)
+		summary = _license_summary(info, {}, subs)
 
-		self.assertIn("Own usage:\n    none", summary)
-		self.assertIn("Sub-companies (2), combined:\n    • Endpoint Security: 2\n    • MSP Secure Plus: 1", summary)
+		self.assertIn("Eigene Lizenzen:\n    keine\n", summary)
+		self.assertIn("Unterfirmen (2):", summary)
+		self.assertIn("  Erste GmbH\n      • Endpoint Security: 1\n      • MSP Secure Plus: 1", summary)
+		self.assertIn("  Zweite GmbH\n      • A La Carte: 1\n      • Endpoint Security: 1", summary)
+		# alphabetical, and each company's licenses come right after its name
+		self.assertLess(summary.index("Erste GmbH"), summary.index("Zweite GmbH"))
 
 	def test_parent_with_own_licenses(self):
-		summary = _license_summary({}, {"endpointMonthlyUsage": 3}, sub_company_total={}, sub_company_count=1)
+		summary = _license_summary({}, {"endpointMonthlyUsage": 3}, [("Kind GmbH", {})])
 
-		self.assertIn("Own usage:\n    • Endpoint Security: 3", summary)
-		self.assertIn("Sub-companies (1), combined:\n    no usage", summary)
+		self.assertIn("Eigene Lizenzen:\n    • Endpoint Security: 3", summary)
+		self.assertIn("  Kind GmbH\n      keine Lizenzen", summary)
 
 	def test_plain_company_unchanged(self):
-		self.assertNotIn("Own usage", _license_summary({}, {"endpointMonthlyUsage": 1}))
+		self.assertNotIn("Eigene Lizenzen", _license_summary({}, {"endpointMonthlyUsage": 1}))
