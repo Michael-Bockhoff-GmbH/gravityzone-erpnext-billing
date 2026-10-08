@@ -27,6 +27,7 @@ def after_install():
 	add_sub_company_fields_to_company()
 	refresh_settings_defaults_and_help()
 	add_companies_using_to_product_mapping()
+	move_licenses_summary_above_sync_status()
 
 
 def create_gravityzone_settings():
@@ -955,5 +956,37 @@ def add_companies_using_to_product_mapping():
 				"Discover License Types run. 0 means the counter exists but nobody uses it yet."
 			),
 		},
+	)
+	doc.save(ignore_permissions=True)
+
+
+def move_licenses_summary_above_sync_status():
+	"""The license summary sat inside the collapsed Sync Status section. Give it its own
+	open section right under the company's mapping fields, so it's visible on opening
+	the record.
+	"""
+	doc = frappe.get_doc("DocType", "GravityZone Company")
+	by_name = {f.fieldname: f for f in doc.fields}
+	if "licenses_section" in by_name or "licenses_summary" not in by_name:
+		return
+
+	summary = by_name["licenses_summary"]
+	doc.remove(summary)
+	position = next(i for i, f in enumerate(doc.fields) if f.fieldname == "status_section")
+	doc.append(
+		"fields",
+		{"fieldname": "licenses_section", "fieldtype": "Section Break", "label": "GravityZone Licenses"},
+		position,
+	)
+	doc.append(
+		"fields",
+		{
+			"fieldname": "licenses_summary",
+			"fieldtype": "Small Text",
+			"label": "Licenses",
+			"read_only": 1,
+			"description": summary.description,
+		},
+		position + 1,
 	)
 	doc.save(ignore_permissions=True)
