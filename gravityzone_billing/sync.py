@@ -580,36 +580,37 @@ def _counter_label(field: str) -> str:
 	return " ".join(w.upper() if w.lower() in _ACRONYMS else w[:1].upper() + w[1:] for w in words)
 
 
-def _counters_text(usage: dict) -> str:
-	return ", ".join(f"{_counter_label(f)} {v}" for f, v in sorted(usage.items()) if v)
+def _counter_lines(usage: dict) -> list:
+	return [f"    • {_counter_label(f)}: {v}" for f, v in sorted(usage.items()) if v]
 
 
 def _license_summary(info: dict, usage: dict, sub_company_total: dict = None, sub_company_count: int = 0) -> str:
-	"""One line describing what a company holds: protection model, subscription
-	type, any additional product types, and this month's non-zero counters.
+	"""What a company holds, one fact per line: protection model, subscription type,
+	any additional product types, and this month's non-zero counters.
 
 	For a parent whose reported counters include its sub-companies, ``usage`` is
 	its *own* share and ``sub_company_total`` the sub-companies' combined counters,
-	so the line says who actually holds the licenses instead of showing the sum
+	so the text says who actually holds the licenses instead of showing the sum
 	under the parent's name.
 	"""
 	subscription = SUBSCRIPTION_TYPES.get(info.get("subscriptionType"), info.get("subscriptionType"))
-	parts = [f"Model: {info.get('assignedProtectionModel') or 'n/a'}", f"Subscription: {subscription}"]
+	lines = [f"Model: {info.get('assignedProtectionModel') or 'n/a'}", f"Subscription: {subscription}"]
 
 	extra = [PRODUCT_TYPES.get(t, str(t)) for t in info.get("additionalProductTypes") or []]
 	if extra:
-		parts.append("Additional products: " + ", ".join(extra))
+		lines.append("Additional products: " + ", ".join(extra))
+
+	def block(title, counters, empty):
+		lines.append(title)
+		lines.extend(_counter_lines(counters) or [f"    {empty}"])
 
 	if sub_company_total is None:
-		counters = _counters_text(usage)
-		if counters:
-			parts.append("Usage: " + counters)
+		if _counter_lines(usage):
+			block("Usage:", usage, "")
 	else:
-		parts.append("Own usage: " + (_counters_text(usage) or "none"))
-		parts.append(
-			f"Sub-companies ({sub_company_count}): " + (_counters_text(sub_company_total) or "no usage")
-		)
-	return " | ".join(parts)
+		block("Own usage:", usage, "none")
+		block(f"Sub-companies ({sub_company_count}), combined:", sub_company_total, "no usage")
+	return "\n".join(lines)
 
 
 def _license_catalogue(usages: list) -> dict:
